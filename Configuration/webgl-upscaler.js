@@ -302,22 +302,47 @@
                 var dpr = window.devicePixelRatio || 1;
                 var containerW = video.clientWidth * dpr;
                 var containerH = video.clientHeight * dpr;
+                var fit = window.getComputedStyle(video).objectFit || 'contain';
                 var videoRatio = video.videoWidth / video.videoHeight;
                 var containerRatio = containerW / containerH;
-                if (videoRatio > containerRatio) {
+                if (fit === 'fill') {
                     targetW = containerW;
-                    targetH = containerW / videoRatio;
-                } else {
-                    targetW = containerH * videoRatio;
                     targetH = containerH;
+                } else if (fit === 'cover') {
+                    if (videoRatio > containerRatio) {
+                        targetH = containerH;
+                        targetW = containerH * videoRatio;
+                    } else {
+                        targetW = containerW;
+                        targetH = containerW / videoRatio;
+                    }
+                } else { // contain
+                    if (videoRatio > containerRatio) {
+                        targetW = containerW;
+                        targetH = containerW / videoRatio;
+                    } else {
+                        targetW = containerH * videoRatio;
+                        targetH = containerH;
+                    }
                 }
                 targetW = Math.round(targetW);
                 targetH = Math.round(targetH);
             }
-            if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
-                this.canvas.width = targetW;
-                this.canvas.height = targetH;
-                gl.viewport(0, 0, targetW, targetH);
+            var viewportX = 0, viewportY = 0;
+            if (this._explicitWidth && this._explicitHeight) {
+                if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
+                    this.canvas.width = targetW;
+                    this.canvas.height = targetH;
+                    gl.viewport(0, 0, targetW, targetH);
+                }
+            } else {
+                if (this.canvas.width !== containerW || this.canvas.height !== containerH) {
+                    this.canvas.width = containerW;
+                    this.canvas.height = containerH;
+                }
+                viewportX = Math.round((containerW - targetW) / 2);
+                viewportY = Math.round((containerH - targetH) / 2);
+                gl.viewport(viewportX, viewportY, targetW, targetH);
             }
             
             // Upload video frame to texture
