@@ -1646,6 +1646,33 @@
                     PlayerIntegration._toggleAutoAspect(menu, autoSw.getAttribute('data-auto-toggle'));
                     return;
                 }
+                var engineTarget = e.target.closest('[data-engine]');
+                if (engineTarget) {
+                    var newMode = engineTarget.getAttribute('data-engine');
+                    if (newMode === 'lanczos') newMode = 'webgl';
+                    if (RealtimeUpscaler._mode !== newMode) {
+                        PlayerIntegration.updatePluginConfig({ RealtimeMode: newMode }).then(function() {
+                            if (RealtimeUpscaler._active) {
+                                RealtimeUpscaler.stop();
+                                var video = PlayerIntegration.findVideoElement();
+                                if (video) {
+                                    var overrideConfig = Object.assign({}, PlayerIntegration._cachedConfig || {}, { RealtimeMode: newMode });
+                                    PlayerIntegration._startRtWithConfig(video, overrideConfig);
+                                }
+                                PlayerIntegration.showPlayerNotification('Switched engine to ' + PlayerIntegration._modeLabel(newMode), 'info');
+                            }
+                        });
+                        var rows = menu.querySelectorAll('[data-engine]');
+                        for (var r = 0; r < rows.length; r++) {
+                            rows[r].classList.toggle('ai-menu__engine--on', rows[r].getAttribute('data-engine') === engineTarget.getAttribute('data-engine'));
+                        }
+                        var switchBtn = menu.querySelector('[data-rt-switch]');
+                        if (switchBtn) {
+                            switchBtn.textContent = newMode === 'server' ? 'Switch to Lanczos' : 'Switch to Server AI';
+                        }
+                    }
+                    return;
+                }
                 var presetBtn = e.target.closest('[data-preset]');
                 if (presetBtn) {
                     PlayerIntegration._pickPreset(menu, presetBtn.getAttribute('data-preset'));
@@ -3147,7 +3174,7 @@
                 '.ai-menu__rt-value--on{color:var(--ai-good)}',
                 '.ai-menu__rt-row{display:flex;gap:8px;margin-top:14px}',
                 '.ai-menu__engines{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px}',
-                '.ai-menu__engine{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:10px;border:1px solid transparent;background:var(--ai-raise)}',
+                '.ai-menu__engine{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-radius:10px;border:1px solid transparent;background:var(--ai-raise);cursor:pointer;transition:background .2s}', '.ai-menu__engine:hover{background:rgba(255,255,255,0.1)}',
                 '.ai-menu__engine--on{border-color:rgba(61,220,151,.4);background:rgba(61,220,151,.07)}',
                 '.ai-menu__engine-name{font-size:13px;font-weight:600}',
                 '.ai-menu__engine--on .ai-menu__engine-name::after{content:"running";margin-left:8px;padding:2px 6px;border-radius:5px;background:rgba(61,220,151,.18);color:var(--ai-good);font:700 9.5px/1 var(--ai-mono);letter-spacing:.08em;text-transform:uppercase;vertical-align:2px}',
@@ -3203,6 +3230,7 @@
         PlayerIntegration.init();
     }
 })();
+
 
 
 
