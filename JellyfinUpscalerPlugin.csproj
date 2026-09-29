@@ -7,8 +7,8 @@
     <TreatWarningsAsErrors Condition="'$(Configuration)'=='Release'">true</TreatWarningsAsErrors>
     <TreatWarningsAsErrors Condition="'$(Configuration)'!='Release'">false</TreatWarningsAsErrors>
     <AssemblyTitle>AI Upscaler Plugin</AssemblyTitle>
-    <Version>1.8.3.39</Version>
-    <AssemblyVersion>1.8.3.39</AssemblyVersion>
+    <Version>1.8.3.40</Version>
+    <AssemblyVersion>1.8.3.40</AssemblyVersion>
     <FileVersion>1.8.3.35</FileVersion>
     <NoWarn>CS8632</NoWarn>
     <Nullable>enable</Nullable>
@@ -76,6 +76,7 @@
   </ItemGroup>
 
 </Project>
+
 
 
 

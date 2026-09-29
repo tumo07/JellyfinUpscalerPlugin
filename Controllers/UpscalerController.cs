@@ -3134,3 +3134,4 @@ namespace JellyfinUpscalerPlugin.Controllers
     }
 }
 
+

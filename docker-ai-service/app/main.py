@@ -2320,8 +2320,7 @@ def upscale_with_ncnn(img: np.ndarray) -> np.ndarray:
     with _model_lock:
         upscaler = state.ncnn_upscaler
         scale = state.ncnn_model_scale
-
-        if upscaler is None:
+    if upscaler is None:
             raise ValueError("No ncnn model loaded")
 
         if RealSR is not None and isinstance(upscaler, RealSR):
@@ -7311,6 +7310,7 @@ async def get_feature_status():
 
 
 # service_start_time is set in lifespan() â€” no deprecated on_event("startup") needed
+
 
 
 

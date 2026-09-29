@@ -664,15 +664,24 @@
             var self = this;
             var video = this._videoElement;
             var canvas = this._captureCanvas;
-            if (this._pendingFrame || !this._active || this._mode !== 'server' || !video || video.paused ||
+            this._pendingFrames = this._pendingFrames || 0;
+            this._frameCount = this._frameCount || 0;
+            this._requestControllers = this._requestControllers || new Set();
+            var maxConcurrent = 3;
+            if (this._pendingFrames >= maxConcurrent || !this._active || this._mode !== 'server' || !video || video.paused ||
                 !this._captureCtx || !canvas || performance.now() < this._nextFrameAt) return;
             var generation = this._generation;
             var controller = new AbortController();
-            this._requestController = controller;
-            this._pendingFrame = true;
+            this._requestControllers.add(controller);
+            this._pendingFrames++;
+            this._frameCount++;
+            var frameIndex = this._frameCount;
             function current() { return self._active && self._mode === 'server' && self._generation === generation; }
             function finish() {
-                if (current()) { self._pendingFrame = false; self._requestController = null; }
+                if (current()) { 
+                    self._pendingFrames = Math.max(0, self._pendingFrames - 1);
+                    self._requestControllers.delete(controller);
+                }
             }
             function failed(error) {
                 if (current() && error.name !== 'AbortError') self._waitForFrame(null, error.message || 'Frame request failed');
@@ -703,6 +712,9 @@
                     }).then(function(resultBlob) {
                         if (!current()) return;
                         if (!resultBlob) { finish(); return; }
+                        self._lastDrawnFrame = self._lastDrawnFrame || 0;
+                        if (frameIndex < self._lastDrawnFrame) { finish(); return; }
+                        self._lastDrawnFrame = frameIndex;
                         var img = new Image();
                         var url = URL.createObjectURL(resultBlob);
                         self._currentObjectUrl = url;
@@ -3232,6 +3244,7 @@
         PlayerIntegration.init();
     }
 })();
+
 
 
 
