@@ -1407,6 +1407,11 @@
             var menu = document.createElement('div');
             menu.id = 'aiUpscalerQuickMenu';
             menu.className = 'ai-menu ai-menu--' + position;
+            menu.addEventListener('wheel', function(e) { e.stopPropagation(); }, { passive: true });
+            menu.addEventListener('mousewheel', function(e) { e.stopPropagation(); }, { passive: true });
+            menu.addEventListener('DOMMouseScroll', function(e) { e.stopPropagation(); }, { passive: true });
+            menu.addEventListener('touchstart', function(e) { e.stopPropagation(); }, { passive: true });
+            menu.addEventListener('touchmove', function(e) { e.stopPropagation(); }, { passive: true });
 
             // Build category groups with state-aware model cards
             var modelsHtml = '';
