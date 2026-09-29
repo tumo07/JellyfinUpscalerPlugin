@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -1035,7 +1035,7 @@ namespace JellyfinUpscalerPlugin.Services
 
             // v1.8.2 - denoise-before-encode prefilter (Netflix lesson). Insert at the FRONT
             // so it cleans the source before scaling/sharpening (sharpening noise is
-            // counter-productive). Only safe in the software filter graph — cuda/vaapi/qsv
+            // counter-productive). Only safe in the software filter graph â€” cuda/vaapi/qsv
             // chains run on GPU surfaces and would need explicit hwdownload/hwupload.
             var denoisePrefilter = new VideoFilterService().BuildDenoisePrefilter(Config);
             if (denoisePrefilter != null)
@@ -1095,7 +1095,7 @@ namespace JellyfinUpscalerPlugin.Services
         }
 
         // Per-codec sane defaults. Picked to roughly match each encoder's
-        // "medium quality ≈ file size similar to libx264 @ CRF 23" reference point.
+        // "medium quality â‰ˆ file size similar to libx264 @ CRF 23" reference point.
         private static string BuildEncoderArgs(string codec)
         {
             switch (codec)
@@ -1117,3 +1117,4 @@ namespace JellyfinUpscalerPlugin.Services
         }
     }
 }
+

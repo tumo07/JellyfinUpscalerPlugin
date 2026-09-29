@@ -524,7 +524,7 @@
         // --- Server AI Tier ---
         _startServer: function() {
             var captureW = (this._config && this._config.RealtimeCaptureWidth) || 480;
-            var captureH = Math.round(captureW * (this._videoElement.videoHeight / this._videoElement.videoWidth));
+            var ratio = this._videoElement.videoWidth ? (this._videoElement.videoHeight / this._videoElement.videoWidth) : (9/16);`r`n            var captureH = Math.round(captureW * ratio);
 
             this._captureCanvas = document.createElement('canvas');
             this._captureCanvas.width = captureW;
@@ -605,7 +605,7 @@
                     if (window.PlayerIntegration) {
                         window.PlayerIntegration.showPlayerNotification('Server AI struggling (' + why + ')', 'warning');
                     }
-                    self._lowFpsStart = 0; // Reset the timer so we don't spam notifications
+                    self._fallbackNotified = true; // Fix spam bug
                 }
             }, 1000);
         },
@@ -736,7 +736,7 @@
                         img.onerror = function() { release(); failed(new Error('Could not decode processed frame')); };
                         img.src = url;
                     }).catch(failed);
-                }, 'image/jpeg', 0.85);
+                }, 'image/jpeg', 0.95);
             } catch (error) { failed(error); }
         },
 
@@ -3202,6 +3202,7 @@
         PlayerIntegration.init();
     }
 })();
+
 
 
 
