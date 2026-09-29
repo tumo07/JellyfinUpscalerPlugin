@@ -293,26 +293,14 @@
             const gl = this.gl;
             const video = this.videoElement;
             
-            // Update canvas size (use explicit size if set, else calculate correct aspect ratio)
+            // Ensure canvas exactly matches native aspect ratio, upscaled by 2x for sharpness
             var targetW, targetH;
             if (this._explicitWidth && this._explicitHeight) {
                 targetW = this._explicitWidth;
                 targetH = this._explicitHeight;
             } else {
-                var dpr = window.devicePixelRatio || 1;
-                var containerW = video.clientWidth * dpr;
-                var containerH = video.clientHeight * dpr;
-                var videoRatio = video.videoWidth / video.videoHeight;
-                
-                // Keep the internal WebGL buffer strictly locked to the video's aspect ratio
-                targetW = containerW;
-                targetH = containerW / videoRatio;
-                if (targetH > containerH) {
-                    targetH = containerH;
-                    targetW = containerH * videoRatio;
-                }
-                targetW = Math.round(targetW);
-                targetH = Math.round(targetH);
+                targetW = video.videoWidth * 2;
+                targetH = video.videoHeight * 2;
             }
             
             if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
@@ -320,10 +308,13 @@
                 this.canvas.height = targetH;
                 gl.viewport(0, 0, targetW, targetH);
                 
-                // Force the canvas to preserve aspect ratio natively
+                // Absolute positioning exactly over the parent
                 this.canvas.style.width = '100%';
                 this.canvas.style.height = '100%';
                 this.canvas.style.objectFit = 'contain';
+                this.canvas.style.position = 'absolute';
+                this.canvas.style.top = '0';
+                this.canvas.style.left = '0';
             }
 
             
