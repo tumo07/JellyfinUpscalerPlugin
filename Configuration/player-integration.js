@@ -1133,7 +1133,7 @@
                 level = target ? (fps >= target * 0.8 ? '' : fps >= target * 0.5 ? 'warn' : 'err')
                                : (fps >= 20 ? '' : fps >= 10 ? 'warn' : 'err');
                 modelEl.textContent = (st.benchmark && st.benchmark.model) || cfg.Model || '—';
-            } else if (playing && cfg.EnableUpscaling === false) {
+            } else if (playing && cfg.EnablePlugin === false) {
                 dot.className = 'ai-menu__status-dot ai-menu__status-dot--off';
                 stateEl.textContent = 'DISABLED';
                 modeEl.textContent = '—';
@@ -3135,3 +3135,4 @@
         PlayerIntegration.init();
     }
 })();
+
