@@ -1645,9 +1645,10 @@
                     } else if (action === 'rt-toggle') {
                         if (RealtimeUpscaler._active) {
                             RealtimeUpscaler.stop();
+                            PlayerIntegration.updatePluginConfig({ EnableRealtimeUpscaling: false });
                             PlayerIntegration.showPlayerNotification('Real-time upscaling stopped', 'warning');
                         } else {
-                            PlayerIntegration.startRealtimeUpscaling();
+                            PlayerIntegration.updatePluginConfig({ EnableRealtimeUpscaling: true }).then(function() { PlayerIntegration.startRealtimeUpscaling(); });
                             PlayerIntegration.showPlayerNotification('Real-time upscaling starting...', 'success');
                         }
                         menu.remove();
@@ -3139,5 +3140,6 @@
         PlayerIntegration.init();
     }
 })();
+
 
 
