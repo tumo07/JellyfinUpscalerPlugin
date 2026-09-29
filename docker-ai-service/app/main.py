@@ -2321,72 +2321,72 @@ def upscale_with_ncnn(img: np.ndarray) -> np.ndarray:
         upscaler = state.ncnn_upscaler
         scale = state.ncnn_model_scale
     if upscaler is None:
-            raise ValueError("No ncnn model loaded")
+        raise ValueError("No ncnn model loaded")
 
-        if RealSR is not None and isinstance(upscaler, RealSR):
-            # RealSR wrapper handles tiling internally
-            # Convert BGR (OpenCV) to PIL Image for the wrapper
-            from PIL import Image as PILImage
-            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            pil_img = PILImage.fromarray(img_rgb)
-            result_pil = upscaler.process(pil_img)
-            result_rgb = np.array(result_pil)
-            return cv2.cvtColor(result_rgb, cv2.COLOR_RGB2BGR)
-        else:
-            # Raw ncnn â€” manual tile-based inference with weighted blending
-            h, w = img.shape[:2]
-            tile_size = ONNX_TILE_SIZE
-            overlap = 32
-            step = tile_size - overlap
-            out_h, out_w = h * scale, w * scale
-            output = np.zeros((out_h, out_w, 3), dtype=np.float32)
-            weight = np.zeros((out_h, out_w, 3), dtype=np.float32)
+    if RealSR is not None and isinstance(upscaler, RealSR):
+        # RealSR wrapper handles tiling internally
+        # Convert BGR (OpenCV) to PIL Image for the wrapper
+        from PIL import Image as PILImage
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        pil_img = PILImage.fromarray(img_rgb)
+        result_pil = upscaler.process(pil_img)
+        result_rgb = np.array(result_pil)
+        return cv2.cvtColor(result_rgb, cv2.COLOR_RGB2BGR)
+    else:
+        # Raw ncnn â€” manual tile-based inference with weighted blending
+        h, w = img.shape[:2]
+        tile_size = ONNX_TILE_SIZE
+        overlap = 32
+        step = tile_size - overlap
+        out_h, out_w = h * scale, w * scale
+        output = np.zeros((out_h, out_w, 3), dtype=np.float32)
+        weight = np.zeros((out_h, out_w, 3), dtype=np.float32)
 
-            def _ncnn_blend_weight(th: int, tw: int) -> np.ndarray:
-                wy = np.ones(th, dtype=np.float32)
-                wx = np.ones(tw, dtype=np.float32)
-                if overlap > 0:
-                    ramp_len = min(overlap * scale, th // 2) if th > 1 else 0
-                    if ramp_len > 0:
-                        ramp = np.linspace(0, 1, ramp_len + 1, dtype=np.float32)[1:]
-                        wy[:len(ramp)] = ramp
-                        wy[-len(ramp):] = ramp[::-1]
-                    ramp_len_x = min(overlap * scale, tw // 2) if tw > 1 else 0
-                    if ramp_len_x > 0:
-                        ramp_x = np.linspace(0, 1, ramp_len_x + 1, dtype=np.float32)[1:]
-                        wx[:len(ramp_x)] = ramp_x
-                        wx[-len(ramp_x):] = ramp_x[::-1]
-                return wy[:, None] * wx[None, :]
+        def _ncnn_blend_weight(th: int, tw: int) -> np.ndarray:
+            wy = np.ones(th, dtype=np.float32)
+            wx = np.ones(tw, dtype=np.float32)
+            if overlap > 0:
+                ramp_len = min(overlap * scale, th // 2) if th > 1 else 0
+                if ramp_len > 0:
+                    ramp = np.linspace(0, 1, ramp_len + 1, dtype=np.float32)[1:]
+                    wy[:len(ramp)] = ramp
+                    wy[-len(ramp):] = ramp[::-1]
+                ramp_len_x = min(overlap * scale, tw // 2) if tw > 1 else 0
+                if ramp_len_x > 0:
+                    ramp_x = np.linspace(0, 1, ramp_len_x + 1, dtype=np.float32)[1:]
+                    wx[:len(ramp_x)] = ramp_x
+                    wx[-len(ramp_x):] = ramp_x[::-1]
+            return wy[:, None] * wx[None, :]
 
-            for y in range(0, h, step):
-                for x in range(0, w, step):
-                    # Clamp tile to image boundaries
-                    y_end = min(y + tile_size, h)
-                    x_end = min(x + tile_size, w)
-                    y_start = max(y_end - tile_size, 0)
-                    x_start = max(x_end - tile_size, 0)
-                    tile = img[y_start:y_end, x_start:x_end]
-                    th, tw = tile.shape[:2]
+        for y in range(0, h, step):
+            for x in range(0, w, step):
+                # Clamp tile to image boundaries
+                y_end = min(y + tile_size, h)
+                x_end = min(x + tile_size, w)
+                y_start = max(y_end - tile_size, 0)
+                x_start = max(x_end - tile_size, 0)
+                tile = img[y_start:y_end, x_start:x_end]
+                th, tw = tile.shape[:2]
 
-                    # ncnn inference
-                    mat_in = ncnn.Mat.from_pixels(tile, ncnn.Mat.PixelType.PIXEL_BGR, tw, th)
-                    ex = upscaler.create_extractor()
-                    ex.input("data", mat_in)
-                    _, mat_out = ex.extract("output")
-                    # ncnn outputs CHW planar layout â€” reshape to CHW then transpose to HWC
-                    raw = np.array(mat_out)
-                    result_tile = raw.reshape(3, th * scale, tw * scale).transpose(1, 2, 0).astype(np.float32)
+                # ncnn inference
+                mat_in = ncnn.Mat.from_pixels(tile, ncnn.Mat.PixelType.PIXEL_BGR, tw, th)
+                ex = upscaler.create_extractor()
+                ex.input("data", mat_in)
+                _, mat_out = ex.extract("output")
+                # ncnn outputs CHW planar layout â€” reshape to CHW then transpose to HWC
+                raw = np.array(mat_out)
+                result_tile = raw.reshape(3, th * scale, tw * scale).transpose(1, 2, 0).astype(np.float32)
 
-                    oy, ox = y_start * scale, x_start * scale
-                    oth, otw = th * scale, tw * scale
-                    bw = _ncnn_blend_weight(oth, otw)[:, :, None]
+                oy, ox = y_start * scale, x_start * scale
+                oth, otw = th * scale, tw * scale
+                bw = _ncnn_blend_weight(oth, otw)[:, :, None]
 
-                    output[oy:oy+oth, ox:ox+otw] += result_tile * bw
-                    weight[oy:oy+oth, ox:ox+otw] += bw
+                output[oy:oy+oth, ox:ox+otw] += result_tile * bw
+                weight[oy:oy+oth, ox:ox+otw] += bw
 
-            weight = np.maximum(weight, 1e-8)
-            output = np.clip(output / weight, 0, 255).astype(np.uint8)
-            return output
+        weight = np.maximum(weight, 1e-8)
+        output = np.clip(output / weight, 0, 255).astype(np.uint8)
+        return output
 
 
 def _probe_tensorrt_subprocess(model_path_str: str, device_id: int) -> bool:
@@ -7310,6 +7310,7 @@ async def get_feature_status():
 
 
 # service_start_time is set in lifespan() â€” no deprecated on_event("startup") needed
+
 
 
 
