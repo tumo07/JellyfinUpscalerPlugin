@@ -320,10 +320,10 @@
                 this.canvas.height = targetH;
                 gl.viewport(0, 0, targetW, targetH);
                 
-                // Dynamically sync CSS object-fit with the video element
+                // Force the canvas to preserve aspect ratio natively
                 this.canvas.style.width = '100%';
                 this.canvas.style.height = '100%';
-                this.canvas.style.objectFit = window.getComputedStyle(video).objectFit || 'contain';
+                this.canvas.style.objectFit = 'contain';
             }
 
             

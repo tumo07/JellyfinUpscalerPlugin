@@ -534,7 +534,7 @@
 
             // Overlay canvas for displaying upscaled frames
             this._overlayCanvas = document.createElement('canvas');
-            this._overlayCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:999;';
+            this._overlayCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none;z-index:999;';
             var parent = this._videoElement.parentElement;
             if (parent) {
                 parent.style.position = 'relative';
