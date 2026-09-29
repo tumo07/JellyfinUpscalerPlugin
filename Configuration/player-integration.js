@@ -1,4 +1,4 @@
-// AI Upscaler Plugin - Player Integration v1.7.13
+﻿// AI Upscaler Plugin - Player Integration v1.7.13
 // Global script injection (loaded via index.html like Intro Skipper)
 // Compatible with Jellyfin 10.11+
 
@@ -136,9 +136,9 @@
         }
     };
 
-    // ── v1.6.1.13: Live filter overlay (CSS filter on <video>) ────────────
+    // â”€â”€ v1.6.1.13: Live filter overlay (CSS filter on <video>) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     //
-    // Client-side only — each preset maps to a CSS `filter` string applied directly
+    // Client-side only â€” each preset maps to a CSS `filter` string applied directly
     // to the playing <video> element. No transcode, no AI service. FFmpeg presets
     // in VideoFilterService.cs are visually close but not pixel-identical: CSS can't
     // express curves / LUTs / vignette / film grain. Those live in the Advanced pane
@@ -162,7 +162,7 @@
         'teal-orange': 'contrast(1.15) saturate(1.2) hue-rotate(-5deg)'
     };
 
-    // Ordered list for chip rendering. 'custom' is omitted — it's implied whenever
+    // Ordered list for chip rendering. 'custom' is omitted â€” it's implied whenever
     // a live slider moves off zero.
     const PRESET_LABELS = [
         ['none', 'None'],
@@ -817,7 +817,7 @@
         _configCacheTime: 0,
         _modelStates: null,
 
-        // Initialize — called once when script loads
+        // Initialize â€” called once when script loads
         init: function() {
             console.log('AI Upscaler: Player Integration v' + PLUGIN_VERSION + ' initializing...');
             this.addStyles();
@@ -891,7 +891,7 @@
                 this._waitForVideoAndAutoStart();
                 this._startWatchdog();
             } else {
-                // Leaving video page — stop upscaling
+                // Leaving video page â€” stop upscaling
                 if (window.RealtimeUpscaler) {
                     window.RealtimeUpscaler.stop();
                 }
@@ -1101,9 +1101,9 @@
             }
         },
 
-        // Refresh the live status row — state/mode/fps/model. Runs every 500ms while menu is open.
+        // Refresh the live status row â€” state/mode/fps/model. Runs every 500ms while menu is open.
         // Reads truth from RealtimeUpscaler (active flag, mode, _currentFps, _benchmarkResult.model)
-        // and falls back to the configured model when idle. No placeholders — the RT engine tracks
+        // and falls back to the configured model when idle. No placeholders â€” the RT engine tracks
         // FPS in requestAnimationFrame (WebGL) or from the server capture loop.
         _refreshStatusRow: function() {
             var menu = document.querySelector('#aiUpscalerQuickMenu');
@@ -1132,32 +1132,32 @@
                 target = Number(st.benchmark && st.benchmark.videoFps) || 0;
                 level = target ? (fps >= target * 0.8 ? '' : fps >= target * 0.5 ? 'warn' : 'err')
                                : (fps >= 20 ? '' : fps >= 10 ? 'warn' : 'err');
-                modelEl.textContent = (st.benchmark && st.benchmark.model) || cfg.Model || '—';
+                modelEl.textContent = (st.benchmark && st.benchmark.model) || cfg.Model || 'â€”';
             } else if (playing && cfg.EnablePlugin === false) {
                 dot.className = 'ai-menu__status-dot ai-menu__status-dot--off';
                 stateEl.textContent = 'DISABLED';
-                modeEl.textContent = '—';
-                modelEl.textContent = cfg.Model || '—';
+                modeEl.textContent = 'â€”';
+                modelEl.textContent = cfg.Model || 'â€”';
             } else if (playing) {
                 dot.className = 'ai-menu__status-dot ai-menu__status-dot--warn';
                 stateEl.textContent = 'STANDBY';
-                modeEl.textContent = st && st.mode === 'off' ? 'Off' : '—';
+                modeEl.textContent = st && st.mode === 'off' ? 'Off' : 'â€”';
                 // A guard that switched realtime off says why; show that instead of a model.
-                modelEl.textContent = (st && st.reason) || cfg.Model || '—';
+                modelEl.textContent = (st && st.reason) || cfg.Model || 'â€”';
             } else {
                 dot.className = 'ai-menu__status-dot ai-menu__status-dot--off';
                 stateEl.textContent = 'IDLE';
-                modeEl.textContent = '—';
-                modelEl.textContent = cfg.Model || '—';
+                modeEl.textContent = 'â€”';
+                modelEl.textContent = cfg.Model || 'â€”';
             }
-            fpsEl.innerHTML = '<b>' + (fps === null ? '—' : fps) + '</b> fps';
+            fpsEl.innerHTML = '<b>' + (fps === null ? 'â€”' : fps) + '</b> fps';
             fpsEl.className = 'ai-menu__status-fps' + (level ? ' ai-menu__status-fps--' + level : '');
             this._drawFpsTrend(menu, fps, target, level);
         },
 
         _modeLabel: function(mode) {
             var labels = { server: 'Server AI', lanczos: 'Lanczos', webgl: 'Lanczos', anime4k: 'Anime4K', 'ai-webgpu': 'WebGPU AI', off: 'Off' };
-            return labels[mode] || (mode ? String(mode) : '—');
+            return labels[mode] || (mode ? String(mode) : 'â€”');
         },
 
         // Last 20 s of the frame rate (one sample per 500 ms poll), drawn against a
@@ -1228,7 +1228,7 @@
                 });
                 return map;
             }).catch(function(err) {
-                console.warn('AI Upscaler: could not fetch model states —', err && (err.message || err.status || err));
+                console.warn('AI Upscaler: could not fetch model states â€”', err && (err.message || err.status || err));
                 return null;
             });
         },
@@ -1341,7 +1341,7 @@
                 var flatCat = {};
                 Object.keys(MODEL_CATALOG).forEach(function(fck) { MODEL_CATALOG[fck].models.forEach(function(fm) { flatCat[fm.id] = fm; }); });
                 modelsHtml += '<div class="ai-menu__cat" data-cat="favorites">';
-                modelsHtml += '<div class="ai-menu__cat-head"><span class="ai-menu__cat-name">★ Favorites</span><span class="ai-menu__cat-desc">pinned on the config page</span></div>';
+                modelsHtml += '<div class="ai-menu__cat-head"><span class="ai-menu__cat-name">â˜… Favorites</span><span class="ai-menu__cat-desc">pinned on the config page</span></div>';
                 for (var fvi = 0; fvi < favIds.length; fvi++) {
                     var favId = favIds[fvi];
                     var favM = flatCat[favId] || { id: favId, name: favId.replace(/^omdb-/, ''), scale: 2 };
@@ -1387,7 +1387,7 @@
             }
 
             // v1.6.1.13: tab panes replace the flat scroll. Each pane is rendered
-            // but only the active one is visible — see ai-menu__pane--active in CSS.
+            // but only the active one is visible â€” see ai-menu__pane--active in CSS.
             // Filter state is seeded synchronously from cached config + defaults;
             // then _loadFilterConfig() refreshes it from the server after menu mount.
             var filterState = this._filterState || this._defaultFilterState();
@@ -1426,7 +1426,7 @@
                 // Live readout: frame rate and its 20 s trend, state, engine and model.
                 '<div class="ai-menu__status" data-status-row>' +
                     '<div class="ai-menu__readout">' +
-                        '<span class="ai-menu__status-fps" data-status-fps><b>—</b> fps</span>' +
+                        '<span class="ai-menu__status-fps" data-status-fps><b>â€”</b> fps</span>' +
                         '<svg class="ai-menu__spark" data-status-spark viewBox="0 0 120 36" preserveAspectRatio="none" aria-hidden="true">' +
                             '<line class="ai-menu__spark-target" x1="0" x2="120" y1="-10" y2="-10"></line>' +
                             '<polyline class="ai-menu__spark-line" points=""></polyline>' +
@@ -1437,8 +1437,8 @@
                         '</span>' +
                     '</div>' +
                     '<div class="ai-menu__status-meta">' +
-                        '<span class="ai-menu__status-mode" data-status-mode>—</span>' +
-                        '<span class="ai-menu__status-sep" aria-hidden="true">·</span>' +
+                        '<span class="ai-menu__status-mode" data-status-mode>â€”</span>' +
+                        '<span class="ai-menu__status-sep" aria-hidden="true">Â·</span>' +
                         '<span class="ai-menu__status-model" data-status-model>' + this._escapeHtml(currentModel) + '</span>' +
                     '</div>' +
                 '</div>' +
@@ -1494,7 +1494,7 @@
                 '<div class="ai-menu__footer">' +
                     '<span class="ai-menu__summary">' +
                         '<span class="ai-menu__summary-dot' + (readyModels > 0 ? '' : ' ai-menu__summary-dot--off') + '"></span>' +
-                        '<span><span class="ai-menu__summary-strong" data-summary-ready>' + (totalModels ? (readyModels + ' of ' + totalModels) : '—') + '</span> models downloaded</span>' +
+                        '<span><span class="ai-menu__summary-strong" data-summary-ready>' + (totalModels ? (readyModels + ' of ' + totalModels) : 'â€”') + '</span> models downloaded</span>' +
                     '</span>' +
                     '<button class="ai-menu__action" data-action="config">All settings<span class="material-icons" aria-hidden="true">chevron_right</span></button>' +
                 '</div>';
@@ -1508,7 +1508,7 @@
                 var rtMenu = statusEl.closest('.ai-menu');
                 var toggleBtn = rtMenu && rtMenu.querySelector('[data-rt-toggle]');
                 var switchBtn = rtMenu && rtMenu.querySelector('[data-rt-switch]');
-                statusEl.textContent = st.active ? PlayerIntegration._modeLabel(st.mode) + ' · ' + st.fps + ' fps' : (st.reason || 'Stopped');
+                statusEl.textContent = st.active ? PlayerIntegration._modeLabel(st.mode) + ' Â· ' + st.fps + ' fps' : (st.reason || 'Stopped');
                 statusEl.classList.toggle('ai-menu__rt-value--on', !!st.active);
                 if (indicator) indicator.classList.toggle('ai-menu__rt-indicator--on', !!st.active);
                 if (toggleBtn) toggleBtn.textContent = st.active ? 'Stop' : 'Start';
@@ -1535,7 +1535,7 @@
             // waiting for a tab click the user has no reason to make.
             this._renderAutoPane(menu);
 
-            // Any interaction on the menu keeps it alive — important for filter sliders
+            // Any interaction on the menu keeps it alive â€” important for filter sliders
             // where users may drag for several seconds. _touchMenuTimer resets the auto-close.
             var touchTimer = function() { PlayerIntegration._touchMenuTimer(menu); };
             menu.addEventListener('pointerdown', touchTimer);
@@ -1676,7 +1676,7 @@
             setTimeout(function() { document.addEventListener('click', PlayerIntegration._menuCloseHandler); }, 100);
 
             // Auto-close after 30s of no interaction. _touchMenuTimer resets this on
-            // any click/input — important for filter sliders that users drag for seconds.
+            // any click/input â€” important for filter sliders that users drag for seconds.
             this._touchMenuTimer(menu);
 
             // Start live status poll so users can see upscaling state + FPS + model
@@ -1692,7 +1692,7 @@
             }, 30000);
         },
 
-        // ── v1.6.1.13: filter pane ───────────────────────────────────────
+        // â”€â”€ v1.6.1.13: filter pane â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _defaultFilterState: function() {
             return {
                 enabled: false,
@@ -1753,7 +1753,7 @@
                     '</div>';
             }
 
-            // Advanced (server-persisted) sliders — shown collapsed by default
+            // Advanced (server-persisted) sliders â€” shown collapsed by default
             var adv = [
                 { key: 'gamma', label: 'Gamma', min: 0.5, max: 2.5, step: 0.01, val: st.gamma },
                 { key: 'sharpness', label: 'Sharpness', min: 0, max: 3, step: 0.1, val: st.sharpness },
@@ -1803,14 +1803,14 @@
         },
 
         // ==================================================================
-        // v1.8.3.18 — AUTO PANE
+        // v1.8.3.18 â€” AUTO PANE
         //
         // Auto mode has been the default since v1.8.3.12, but the in-player panel
         // only ever offered the Custom-mode questions ("pick a model", "pick a
         // filter"). What it could not answer was the one that matters while a video
         // is running: what did auto decide for THIS file, why, and how do I turn it
         // off without leaving the player. Everything below writes to the plugin
-        // config and takes effect immediately — no full configuration page, no reload.
+        // config and takes effect immediately â€” no full configuration page, no reload.
         // ==================================================================
 
         // Everything the auto pane interpolates goes through this. Most of it is
@@ -1919,14 +1919,14 @@
                                     // from" is not.
                                     (scaleNum ? '<span class="ai-menu__auto-scale">' + scaleNum + '&times;</span>' : '') +
                                 '</div>' +
-                                '<div class="ai-menu__auto-model">' + esc(pick.recommended_model || '—') + '</div>' +
+                                '<div class="ai-menu__auto-model">' + esc(pick.recommended_model || 'â€”') + '</div>' +
                                 (pick._sourceKnown && pick.output_size ? '<div class="ai-menu__auto-size">' + esc(pick.output_size) + '</div>' : '') +
                                 (pick._sourceKnown && pick.reason ? '<div class="ai-menu__auto-reason">' + esc(pick.reason) + '</div>' : '') +
                                 over + sig +
                             '</div>';
                 } else {
                     html += '<div class="ai-menu__auto-card ai-menu__auto-card--muted">' +
-                                'No decision available — the AI service did not answer. ' +
+                                'No decision available â€” the AI service did not answer. ' +
                                 'Auto never blocks playback: your configured model is used instead.' +
                             '</div>';
                 }
@@ -1960,17 +1960,17 @@
                         '<span class="ai-menu__section-sub">applies immediately</span></div>';
                 html += PlayerIntegration._autoRow('filters', 'Video filters',
                             (cfg.ActiveFilterPreset && cfg.ActiveFilterPreset !== 'none')
-                                ? 'Your preset: ' + esc(cfg.ActiveFilterPreset) + ' — auto only suggests, never overwrites'
+                                ? 'Your preset: ' + esc(cfg.ActiveFilterPreset) + ' â€” auto only suggests, never overwrites'
                                 : 'Auto may suggest a look for this content',
                             cfg.EnableVideoFilters === true, false);
                 html += PlayerIntegration._autoRow('face', 'Face restoration',
-                            esc(cfg.FaceRestoreModel || 'gfpgan-v1.4') + ' — sharpens faces, costs extra time per frame',
+                            esc(cfg.FaceRestoreModel || 'gfpgan-v1.4') + ' â€” sharpens faces, costs extra time per frame',
                             cfg.EnableFaceRestore === true, false);
                 html += PlayerIntegration._autoRow('realtime', 'Real-time upscaling',
                             'Upscale during playback instead of only in batch jobs',
                             cfg.EnableRealtimeUpscaling !== false, false);
                 html += PlayerIntegration._autoRow('mask', 'Cover objects',
-                            esc(cfg.ObjectMaskClasses || 'animals') + ' — ' +
+                            esc(cfg.ObjectMaskClasses || 'animals') + ' â€” ' +
                             (cfg.ObjectMaskMode === 'blur' ? 'blurred' : 'covered with a box') +
                             '. Replaces upscaling on this stream: two inference passes per frame ' +
                             'do not keep up with playback',
@@ -2048,7 +2048,7 @@
                     // v1.8.3.20 - the model is applied, the filter is not: it is only
                     // ever offered as a suggestion below.
                     PlayerIntegration._startRtWithConfig(video, Object.assign({}, cfg, { Model: pick.model }));
-                    var msg = 'Applied ' + pick.model + (pick.reason ? ' — ' + pick.reason : '');
+                    var msg = 'Applied ' + pick.model + (pick.reason ? ' â€” ' + pick.reason : '');
                     PlayerIntegration.showPlayerNotification(msg, pick.substitutedFrom ? 'warning' : 'info');
                     PlayerIntegration._renderAutoPane(menu);
                 });
@@ -2122,7 +2122,7 @@
             var key = slider.getAttribute('data-slider');
             var v = parseInt(slider.value, 10) || 0;
             this._filterState[key] = v;
-            // Any manual slider adjust transitions to 'custom' — clears preset highlight.
+            // Any manual slider adjust transitions to 'custom' â€” clears preset highlight.
             this._filterState.preset = 'custom';
             this._filterState.enabled = true;
             var valEl = menu.querySelector('[data-slider-val="' + key + '"]');
@@ -2133,7 +2133,7 @@
         },
 
         _onAdvSliderChange: function(menu, slider) {
-            // Advanced sliders don't drive live CSS — they apply server-side on next seek.
+            // Advanced sliders don't drive live CSS â€” they apply server-side on next seek.
             if (!this._filterState) this._filterState = this._defaultFilterState();
             var key = slider.getAttribute('data-adv-slider');
             var v = parseFloat(slider.value);
@@ -2147,7 +2147,7 @@
             if (!this._filterState) this._filterState = this._defaultFilterState();
             this._filterState.preset = preset;
             this._filterState.enabled = (preset !== 'none');
-            // Reset the 3 live sliders — presets define their own look.
+            // Reset the 3 live sliders â€” presets define their own look.
             this._filterState.brightness = 0;
             this._filterState.contrast = 0;
             this._filterState.saturation = 0;
@@ -2187,7 +2187,7 @@
             var css = this._composeCssFromState(st);
             video.style.filter = css || '';
             // A realtime client-side upscaler (Anime4K / WebGL / WebGPU) renders to a
-            // canvas overlay (z-index 999) that covers the — often opacity:0 — <video>.
+            // canvas overlay (z-index 999) that covers the â€” often opacity:0 â€” <video>.
             // The CSS filter on the hidden video then has no visible effect, so apply it
             // to the visible canvas too. Without this the filters "don't take" whenever
             // realtime upscaling is on (which auto-starts on every video since 10.11).
@@ -2224,7 +2224,7 @@
                         vignette: resp.vignette || 0,
                         filmGrain: resp.filmGrain || 0,
                         denoise: resp.denoise || 0,
-                        canSave: true // server responded — we'll let the POST discover non-admin
+                        canSave: true // server responded â€” we'll let the POST discover non-admin
                     };
                     self._applyFilterState(self._filterState);
                     // Update UI to reflect loaded state
@@ -2294,7 +2294,7 @@
                 PlayerIntegration.showPlayerNotification('Filter settings saved', 'success');
                 if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
             }).catch(function(err) {
-                var msg = 'Save failed — admin privileges required';
+                var msg = 'Save failed â€” admin privileges required';
                 if (err && err.status && err.status !== 403) msg = 'Save failed: HTTP ' + err.status;
                 PlayerIntegration.showPlayerNotification(msg, 'warning');
                 if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
@@ -2394,7 +2394,7 @@
                 var msg = (err && err.message) ? err.message : 'unknown error';
                 // Surface config-specific hint when AI service token is missing
                 if (/API_TOKEN|403|401/.test(msg)) {
-                    msg = 'AI service auth not configured. Open Full Configuration → AI Service → set API Token.';
+                    msg = 'AI service auth not configured. Open Full Configuration â†’ AI Service â†’ set API Token.';
                 }
                 self.showPlayerNotification('Failed: ' + msg, 'error');
             }).finally(function() {
@@ -2588,7 +2588,7 @@
 
         // Auto-Mode: ask the plugin to pick the best model + filter for this video.
         // Returns a Promise<{model, filter}> or resolves with null on any failure.
-        // Only kicks in when config.EnableAutoModelSelection === true (default false —
+        // Only kicks in when config.EnableAutoModelSelection === true (default false â€”
         // the user must opt in under Settings). No placeholder: the backend runs real
         // heuristics over genres/resolution/multi-frame-capability.
         _autoSelectForVideo: function(video, config) {
@@ -2615,9 +2615,9 @@
                         // v1.8.3.13 - the auto decision used to land in the developer
                         // console only; carry it out so the UI can show it.
                         var autoMsg = 'Auto: ' + res.recommended_model +
-                            (res.reason ? ' — ' + res.reason : '');
+                            (res.reason ? ' â€” ' + res.reason : '');
                         if (res.substituted_from) {
-                            autoMsg += ' (' + res.substituted_from + ' unavailable — stand-in used)';
+                            autoMsg += ' (' + res.substituted_from + ' unavailable â€” stand-in used)';
                         }
                         console.log('AI Upscaler ' + autoMsg +
                             ' (' + w + 'x' + h + ', genres=' + (genres || 'none') + ')');
@@ -2629,7 +2629,7 @@
                         };
                     });
             }).catch(function(err) {
-                console.warn('AI Upscaler Auto: recommend-model failed —', err && (err.message || err));
+                console.warn('AI Upscaler Auto: recommend-model failed â€”', err && (err.message || err));
                 return null;
             });
         },
@@ -2683,7 +2683,7 @@
 
                 // Auto-Mode hook: if the user opted in, let the plugin pick model+filter
                 // for *this* video based on genres + resolution. Overrides config.Model
-                // for this session only — does not persist back to config.
+                // for this session only â€” does not persist back to config.
                 return PlayerIntegration._autoSelectForVideo(video, config).then(function(pick) {
                     if (generation !== RealtimeUpscaler._generation) return;
                     if (pick && pick.model) {
@@ -2696,9 +2696,9 @@
                         // does, so the notice names the model it really set and points at
                         // the tab where the look is OFFERED rather than implying it is on.
                         var notice = 'Auto: ' + pick.model;
-                        if (pick.reason) notice += ' — ' + pick.reason;
-                        if (pick.substitutedFrom) notice += ' (' + pick.substitutedFrom + ' unavailable — stand-in used)';
-                        if (pick.filter && pick.filter !== 'none') notice += ' · look suggested in the Auto tab';
+                        if (pick.reason) notice += ' â€” ' + pick.reason;
+                        if (pick.substitutedFrom) notice += ' (' + pick.substitutedFrom + ' unavailable â€” stand-in used)';
+                        if (pick.filter && pick.filter !== 'none') notice += ' Â· look suggested in the Auto tab';
                         PlayerIntegration.showPlayerNotification(notice, pick.substitutedFrom ? 'warning' : 'info');
                     }
                     return PlayerIntegration._startRtWithConfig(video, config);
@@ -3135,4 +3135,5 @@
         PlayerIntegration.init();
     }
 })();
+
 
