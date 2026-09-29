@@ -3906,8 +3906,6 @@ def run_benchmark(test_size: int = 256) -> dict:
     # into the graph and raise a Reshape error during warmup if fed 64x64
     # (FIX-3 / issue #70 — the "Reshape" failure Gemini misattributed to the
     # GPU). Read the real shape from the loaded ONNX session instead of
-    # guessing from the model name (the substring "realesrgan" matched both
-    # the dynamic realesrgan-x4 and the fixed realesrgan-x4-256).
     if state.current_model_type == "onnx":
         fixed_dim = None
         if state.onnx_session is not None:
@@ -3920,8 +3918,6 @@ def run_benchmark(test_size: int = 256) -> dict:
                 fixed_dim = None
         if fixed_dim is not None:
             test_size = fixed_dim          # fixed-shape model: input MUST match exactly
-        elif "realesrgan" in state.current_model:
-            test_size = 64                 # dynamic Real-ESRGAN: small tile (prior behavior)
 
     # Create test image
     test_img = np.random.randint(0, 255, (test_size, test_size, 3), dtype=np.uint8)

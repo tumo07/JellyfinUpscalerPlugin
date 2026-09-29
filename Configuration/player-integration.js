@@ -826,9 +826,40 @@
                 PlayerIntegration.onViewShow(e);
             });
 
+            // Listen to SPA routing events
+            window.addEventListener('hashchange', function() {
+                PlayerIntegration.onViewShow();
+            });
+            window.addEventListener('popstate', function() {
+                PlayerIntegration.onViewShow();
+            });
+
+            // Pointer/mouse movement ensures button is restored as soon as OSD is awakened
+            document.addEventListener('pointermove', function() {
+                if (PlayerIntegration.isVideoPage()) {
+                    var btn = document.getElementById('aiUpscalerButton');
+                    if (!btn || !document.body.contains(btn)) {
+                        PlayerIntegration.injectPlayerButton();
+                    }
+                }
+            }, { passive: true });
+
+            // If player is ALREADY active on script load (e.g. reload or direct link)
+            if (this.isVideoPage()) {
+                this.onViewShow();
+            }
+
             this.waitForApiClient();
             this.addKeyboardShortcuts();
             console.log('AI Upscaler: Player Integration v' + PLUGIN_VERSION + ' loaded');
+        },
+
+        isVideoPage: function() {
+            var h = window.location.hash || '';
+            return h.indexOf('/video') !== -1 ||
+                   h.indexOf('/playback') !== -1 ||
+                   document.getElementById('videoOsdPage') !== null ||
+                   document.querySelector('.videoOsdBottom, .btnVideoOsdSettings') !== null;
         },
 
         waitForApiClient: function() {
@@ -846,23 +877,48 @@
         },
 
         onViewShow: function(e) {
-            var detail = e.detail || {};
+            var detail = (e && e.detail) || {};
             var type = detail.type || '';
-            var isVideoPage = type === 'video-osd' ||
-                              (e.target && e.target.id === 'videoOsdPage') ||
-                              window.location.hash.startsWith('#/video');
+            var isVideo = type === 'video-osd' ||
+                          (e && e.target && e.target.id === 'videoOsdPage') ||
+                          PlayerIntegration.isVideoPage();
 
-            if (isVideoPage) {
+            if (isVideo) {
                 this._buttonInjected = false;
                 this.injectPlayerButton();
                 // Modern Jellyfin (10.11+) no longer exposes window.playbackManager,
                 // so playbackstart listener never fires. Wait for video element + playing event instead.
                 this._waitForVideoAndAutoStart();
+                this._startWatchdog();
             } else {
                 // Leaving video page — stop upscaling
                 if (window.RealtimeUpscaler) {
                     window.RealtimeUpscaler.stop();
                 }
+                this._stopWatchdog();
+            }
+        },
+
+        _watchdogTimer: null,
+        _startWatchdog: function() {
+            if (this._watchdogTimer) return;
+            var self = this;
+            this._watchdogTimer = setInterval(function() {
+                if (self.isVideoPage()) {
+                    var btn = document.getElementById('aiUpscalerButton');
+                    if (!btn || !document.body.contains(btn)) {
+                        self.injectPlayerButton();
+                    }
+                } else {
+                    self._stopWatchdog();
+                }
+            }, 2000);
+        },
+
+        _stopWatchdog: function() {
+            if (this._watchdogTimer) {
+                clearInterval(this._watchdogTimer);
+                this._watchdogTimer = null;
             }
         },
 
@@ -883,10 +939,10 @@
                     self._autoStartPending = false;
                     var trigger = function() {
                         if (generation !== RealtimeUpscaler._generation) return;
-                        if (window.location.hash.indexOf('#/video') !== 0) return;
+                        if (!PlayerIntegration.isVideoPage()) return;
                         setTimeout(function() {
                             if (generation !== RealtimeUpscaler._generation ||
-                                window.location.hash.indexOf('#/video') !== 0) return;
+                                !PlayerIntegration.isVideoPage()) return;
                             self.startRealtimeUpscaling();
                         }, 600);
                     };
@@ -911,17 +967,24 @@
         _mutationObserver: null,
 
         injectPlayerButton: function() {
-            if (this._buttonInjected) return;
+            var existing = document.getElementById('aiUpscalerButton');
+            if (existing && document.body.contains(existing)) {
+                this._buttonInjected = true;
+                return;
+            }
+            this._buttonInjected = false;
 
             var selectors = [
                 '.videoOsdBottom .buttons',
                 '.videoOsdBottom .osdControls',
                 '.videoOsdBottom',
+                '#videoOsdPage .buttons',
                 '#videoOsdPage .osdControls',
                 '.osdControls',
                 '.osdBottomBar',
                 '[data-action="fullscreen"]',
-                '.btnToggleFullscreen'
+                '.btnToggleFullscreen',
+                '.btnVideoOsdSettings'
             ];
 
             var container = null;
@@ -929,7 +992,7 @@
                 var el = document.querySelector(selectors[i]);
                 if (el) {
                     container = (el.tagName === 'BUTTON') ? el.parentElement : el;
-                    break;
+                    if (container) break;
                 }
             }
 
@@ -945,11 +1008,8 @@
             }
 
             this._injectRetryCount = 0;
-            this._stopMutationObserver();
-
-            if (document.querySelector('#aiUpscalerButton')) {
-                this._buttonInjected = true;
-                return;
+            if (!this._mutationObserver) {
+                this._startMutationObserver();
             }
 
             var btn = document.createElement('button');
@@ -957,7 +1017,7 @@
             btn.className = 'paper-icon-button-light autoSize';
             btn.setAttribute('is', 'paper-icon-button-light');
             btn.setAttribute('type', 'button');
-            btn.setAttribute('title', 'AI Upscaler');
+            btn.setAttribute('title', 'AI Upscaler (Alt+M)');
             btn.innerHTML = '<span class="material-icons">auto_awesome</span>';
 
             btn.addEventListener('click', function(e) {
@@ -966,7 +1026,7 @@
                 PlayerIntegration.toggleUpscalerMenu();
             });
 
-            var refButton = container.querySelector('.btnVideoOsdSettings, .btnToggleFullscreen');
+            var refButton = container.querySelector('.btnVideoOsdSettings, .btnToggleFullscreen, .btnFullscreen');
             if (refButton) {
                 refButton.parentNode.insertBefore(btn, refButton);
             } else {
@@ -2778,30 +2838,11 @@
         _startMutationObserver: function() {
             if (this._mutationObserver) return;
             this._mutationObserver = new MutationObserver(function(mutations) {
-                if (PlayerIntegration._buttonInjected) {
-                    PlayerIntegration._stopMutationObserver();
-                    return;
-                }
-                for (var i = 0; i < mutations.length; i++) {
-                    var addedNodes = mutations[i].addedNodes;
-                    for (var j = 0; j < addedNodes.length; j++) {
-                        var node = addedNodes[j];
-                        if (node.nodeType !== 1) continue;
-                        if (node.classList && (
-                            node.classList.contains('videoOsdBottom') ||
-                            node.classList.contains('osdControls') ||
-                            node.id === 'videoOsdPage'
-                        )) {
-                            PlayerIntegration._injectRetryCount = 0;
-                            PlayerIntegration.injectPlayerButton();
-                            return;
-                        }
-                        if (node.querySelector && node.querySelector('.videoOsdBottom, .osdControls, #videoOsdPage')) {
-                            PlayerIntegration._injectRetryCount = 0;
-                            PlayerIntegration.injectPlayerButton();
-                            return;
-                        }
-                    }
+                if (!PlayerIntegration.isVideoPage()) return;
+                var btn = document.getElementById('aiUpscalerButton');
+                if (!btn || !document.body.contains(btn)) {
+                    PlayerIntegration._buttonInjected = false;
+                    PlayerIntegration.injectPlayerButton();
                 }
             });
             this._mutationObserver.observe(document.body, { childList: true, subtree: true });
@@ -2810,11 +2851,10 @@
             if (!this._viewHideCleanupBound) {
                 this._viewHideCleanupBound = true;
                 document.addEventListener('viewbeforehide', function() {
-                    if (PlayerIntegration._mutationObserver) {
-                        PlayerIntegration._mutationObserver.disconnect();
-                        PlayerIntegration._mutationObserver = null;
-                    }
                     PlayerIntegration._buttonInjected = false;
+                    if (!PlayerIntegration.isVideoPage()) {
+                        PlayerIntegration._stopMutationObserver();
+                    }
                 });
             }
         },

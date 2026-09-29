@@ -41,6 +41,8 @@ namespace JellyfinUpscalerPlugin.Services
             {
                 case "strong-gpu":
                 case "mid-gpu":
+                case "dml-gpu":
+                case "dml-gpu-low":
                     return Weight.Heavy;
                 case "igpu":
                 case "strong-cpu":
@@ -177,6 +179,8 @@ namespace JellyfinUpscalerPlugin.Services
         {
             "strong-gpu" => "strong GPU",
             "mid-gpu" => "GPU",
+            "dml-gpu" => "DirectML GPU",
+            "dml-gpu-low" => "DirectML GPU (limited VRAM)",
             "igpu" => "integrated GPU",
             "strong-cpu" => "multi-core CPU (no GPU)",
             "weak-cpu" => "weak CPU (no GPU)",
