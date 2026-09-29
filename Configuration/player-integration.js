@@ -1199,12 +1199,12 @@
                     
                     if (st.mode === 'server') {
                         out += "\n=== SERVER STATUS ===\n";
-                        fetch('/jellyfin-ai-upscaler/status').then(function(res) { return res.json(); }).then(function(sData) {
-                            out += "GPU Active  : " + (sData.using_gpu ? "YES" : "NO") + "\n";
-                            out += "Hardware    : " + (sData.gpu_name || "CPU") + "\n";
-                            out += "Model Loaded: " + (sData.model_loaded ? sData.model_name : "None") + "\n";
+                        fetch(ApiClient.getUrl('Upscaler/service-health'), { headers: { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' } }).then(function(res) { return res.json(); }).then(function(sData) {
+                            out += "GPU Active  : " + (sData.usingGpu ? "YES" : "NO") + "\n";
+                            out += "Hardware    : " + (sData.usingGpu ? "GPU" : "CPU") + "\n";
+                            out += "Model Loaded: " + (sData.currentModel || "None") + "\n";
                             out += "Provider    : " + (sData.providers && sData.providers[0] ? sData.providers[0] : "?") + "\n";
-                            if (sData.circuit_open) out += "WARNING: Circuit breaker open!\n";
+                            if (!sData.available) out += "WARNING: Backend AI offline or timeout!\n";
                             diagEl.textContent = out;
                         }).catch(function(e) {
                             diagEl.textContent = out + "Could not fetch backend status.\n";
@@ -3203,6 +3203,7 @@
         PlayerIntegration.init();
     }
 })();
+
 
 
 
