@@ -430,3 +430,4 @@
     console.log('AI Upscaler: WebGL shader module loaded');
 })();
 
+
