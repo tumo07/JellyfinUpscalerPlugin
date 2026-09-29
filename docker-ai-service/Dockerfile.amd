@@ -109,7 +109,7 @@ RUN mkdir -p /app/models /app/cache /app/config && \
 EXPOSE 5000
 
 # Run as non-root user
-USER appuser
+USER root
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
@@ -118,3 +118,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 # Run the application via entrypoint
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "5000"]
+
