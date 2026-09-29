@@ -2256,6 +2256,20 @@ async def load_ncnn_model(model_name: str, model_info: dict, model_path: Path) -
             state.current_model_input_frames = model_info.get("input_frames", 1)
             state.onnx_model_scale = scale  # For compatibility with benchmark
             state.providers = ["VulkanComputeProvider"]
+            state.use_gpu = True
+            # Fix GPU name if hardware detection missed it (ncnn bypasses ONNX)
+            if not state.gpu_name or "CPU" in state.gpu_name or "No GPU" in state.gpu_name:
+                try:
+                    import subprocess as _sp
+                    _res = _sp.run(
+                        ["powershell", "-NoProfile", "-Command",
+                         "Get-CimInstance Win32_VideoController | Select-Object -First 1 -ExpandProperty Name"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if _res.returncode == 0 and _res.stdout.strip():
+                        state.gpu_name = _res.stdout.strip()
+                except Exception:
+                    state.gpu_name = f"Vulkan GPU {gpu_id}"
             # Clear competing backends to prevent stale references
             state.cv_model = None
             state.onnx_session = None
