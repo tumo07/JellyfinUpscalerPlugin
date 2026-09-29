@@ -1,4 +1,4 @@
-﻿// AI Upscaler Plugin - Player Integration v1.7.13
+// AI Upscaler Plugin - Player Integration v1.7.13
 // Global script injection (loaded via index.html like Intro Skipper)
 // Compatible with Jellyfin 10.11+
 
@@ -598,9 +598,13 @@
                     }
                 }
                 if (why) {
-                    self._stopServer();
-                    self._fallbackToLanczos();
-                    if (window.PlayerIntegration) window.PlayerIntegration.showPlayerNotification('Switched to Lanczos (' + why + ')', 'warning');
+                    // We used to automatically fallback to Lanczos here if the server dropped below half framerate.
+                    // However, users complained this forced them off their selected engine unexpectedly when testing heavy models or 720p streams.
+                    // We now just show a warning notification but KEEP them on the Server AI engine.
+                    if (window.PlayerIntegration) {
+                        window.PlayerIntegration.showPlayerNotification('Server AI struggling (' + why + ')', 'warning');
+                    }
+                    self._lowFpsStart = 0; // Reset the timer so we don't spam notifications
                 }
             }, 1000);
         },
