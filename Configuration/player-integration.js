@@ -1,4 +1,4 @@
-\ufeff// AI Upscaler Plugin - Player Integration v1.7.13
+// AI Upscaler Plugin - Player Integration v1.7.13
 // Global script injection (loaded via index.html like Intro Skipper)
 // Compatible with Jellyfin 10.11+
 
@@ -678,10 +678,8 @@
             var frameIndex = this._frameCount;
             function current() { return self._active && self._mode === 'server' && self._generation === generation; }
             function finish() {
-                if (current()) { 
-                    self._pendingFrames = Math.max(0, self._pendingFrames - 1);
-                    self._requestControllers.delete(controller);
-                }
+                self._pendingFrames = Math.max(0, self._pendingFrames - 1);
+                self._requestControllers.delete(controller);
             }
             function failed(error) {
                 if (current() && error.name !== 'AbortError') self._waitForFrame(null, error.message || 'Frame request failed');
@@ -691,7 +689,7 @@
                 // Capture after the backoff, never retry the previously captured frame.
                 this._captureCtx.drawImage(video, 0, 0, canvas.width, canvas.height);
                 canvas.toBlob(function(blob) {
-                    if (!current()) return;
+                    if (!current()) { finish(); return; }
                     if (!blob) { failed(new Error('Could not capture video frame')); return; }
                     var endpoint = self._objectMaskEnabled ? 'Upscaler/detect-mask' : 'Upscaler/upscale-frame';
                     fetch(ApiClient.getUrl(endpoint), {
@@ -710,7 +708,7 @@
                         if (self._objectMaskEnabled) self._lastDetectionCount = parseInt(resp.headers.get('X-Detections'), 10) || 0;
                         return resp.blob();
                     }).then(function(resultBlob) {
-                        if (!current()) return;
+                        if (!current()) { finish(); return; }
                         if (!resultBlob) { finish(); return; }
                         self._lastDrawnFrame = self._lastDrawnFrame || 0;
                         if (frameIndex < self._lastDrawnFrame) { finish(); return; }
@@ -724,7 +722,7 @@
                         }
                         img.onload = function() {
                             release();
-                            if (!current()) return;
+                            if (!current()) { finish(); return; }
                             try {
                                 self._overlayCanvas.width = img.width;
                                 self._overlayCanvas.height = img.height;

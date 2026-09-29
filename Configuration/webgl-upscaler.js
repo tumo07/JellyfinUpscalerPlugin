@@ -1,4 +1,4 @@
-\ufeff// WebGL/WebGPU Client-Side Upscaling Shader
+// WebGL/WebGPU Client-Side Upscaling Shader
 // Provides real-time video enhancement without server processing
 
 (function() {
