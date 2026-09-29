@@ -12,6 +12,7 @@ ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
 ENV USE_GPU=true
 ENV OPENVINO_DEVICE=GPU
+ENV INTEL_OPENVINO_DIR=""
 
 # Build-time metadata — REQUIRED build arg, set by CI from the release tag:
 #   --build-arg APP_VERSION=<tag> --build-arg APP_COMMIT=$(git rev-parse --short HEAD)
@@ -111,13 +112,10 @@ RUN chmod +x /entrypoint.sh
 RUN mkdir -p /app/models /app/cache /app/config && \
     chown -R openvino:openvino /app /entrypoint.sh
 
-# Run as non-root openvino user for security.
-# NOTE: We intentionally keep the 'openvino' user (not 'appuser' like Dockerfile.cpu)
-# because the openvino/ubuntu22_runtime base image pre-configures this user with
-# the correct Intel GPU group memberships (render/video) needed for OpenCL/Level-Zero
-# hardware access. Changing to a different user would require re-granting all GPU
-# device permissions and risks breaking GPU passthrough on Arc/iGPU hardware.
-USER openvino
+# Run as root to ensure /dev/dri GPU passthrough works seamlessly.
+# Relying on USER openvino breaks hardware acceleration because the container's
+# internal 'render' group GID rarely matches the host's GID, causing Permission Denied.
+USER root
 
 # Expose API port
 EXPOSE 5000
