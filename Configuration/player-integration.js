@@ -524,7 +524,8 @@
         // --- Server AI Tier ---
         _startServer: function() {
             var captureW = (this._config && this._config.RealtimeCaptureWidth) || 480;
-            var ratio = this._videoElement.videoWidth ? (this._videoElement.videoHeight / this._videoElement.videoWidth) : (9/16);`r`n            var captureH = Math.round(captureW * ratio);
+            var ratio = this._videoElement.videoWidth ? (this._videoElement.videoHeight / this._videoElement.videoWidth) : (9/16);
+            var captureH = Math.round(captureW * ratio);
 
             this._captureCanvas = document.createElement('canvas');
             this._captureCanvas.width = captureW;
@@ -3202,6 +3203,7 @@
         PlayerIntegration.init();
     }
 })();
+
 
 
 

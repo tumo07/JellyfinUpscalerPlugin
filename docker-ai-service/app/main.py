@@ -1,4 +1,4 @@
-"""
+﻿"""
 AI Upscaler Service - FastAPI Application
 Jellyfin AI Upscaler Plugin - Microservice Component v1.5.5.8
 Supports OpenCV DNN (.pb) and ONNX Runtime models with GPU detection
@@ -65,7 +65,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Live log streaming — in-memory ring buffer + asyncio event bus for SSE
+# Live log streaming â€” in-memory ring buffer + asyncio event bus for SSE
 LOG_BUFFER: "collections.deque[dict]" = collections.deque(maxlen=5000)  # v1.8.3.12 - deeper history for the Console tab
 _LOG_SEQ = 0
 _LOG_LOCK = threading.Lock()
@@ -113,20 +113,20 @@ def _attach_buffer_to_uvicorn():
         if _lg.level == logging.NOTSET:
             _lg.setLevel(logging.INFO)
 
-# Paths — env-var overrides allow running outside Docker (e.g. CI unit tests)
+# Paths â€” env-var overrides allow running outside Docker (e.g. CI unit tests)
 MODELS_DIR = Path(os.getenv("MODELS_DIR", "/app/models"))
 CACHE_DIR = Path(os.getenv("CACHE_DIR", "/app/cache"))
 STATIC_DIR = Path(os.getenv("STATIC_DIR", "/app/static"))
-# CONFIG_DIR — PERSISTENT auth/config state (managed API tokens). Deliberately
+# CONFIG_DIR â€” PERSISTENT auth/config state (managed API tokens). Deliberately
 # separate from the wipe-able CACHE_DIR and from MODELS_DIR; mount as its own volume.
 CONFIG_DIR = Path(os.getenv("CONFIG_DIR", "/app/config"))
 
 from . import token_store  # hashed, persistent multi-token store (lazy expiry)
 
-# Version — single source of truth is the APP_VERSION build arg the
+# Version â€” single source of truth is the APP_VERSION build arg the
 # Dockerfiles pass; fall back to a literal only for bare local runs.
 # (FIX-1: the hardcoded literal had drifted to 1.6.1.21 while the image
-# entrypoint banner correctly reported 1.7.7 — issue #69 screenshots.)
+# entrypoint banner correctly reported 1.7.7 â€” issue #69 screenshots.)
 # v1.8.3.13: `or` instead of a getenv default on purpose - the Dockerfiles do
 # `ENV APP_VERSION=${APP_VERSION}`, so a build without --build-arg sets the
 # variable to an EMPTY STRING and a getenv default would never apply.
@@ -231,19 +231,19 @@ class RealtimeStats:
 
     All accumulators use bounded rolling windows to prevent unbounded memory
     growth in long-running deployments.  frames_processed / total_time are
-    capped at _ACCUM_WINDOW_SIZE frames — avg_ms reflects the most recent
+    capped at _ACCUM_WINDOW_SIZE frames â€” avg_ms reflects the most recent
     window rather than a lifetime average, which is more useful in practice.
     """
 
     _FPS_WINDOW_SIZE = 60    # Rolling window for FPS calculation
-    _ACCUM_WINDOW_SIZE = 500  # Max frames kept for avg_ms — prevents OOM
+    _ACCUM_WINDOW_SIZE = 500  # Max frames kept for avg_ms â€” prevents OOM
 
     def __init__(self):
         self.current_fps: float = 0.0
         self.dropped_frames: int = 0
         self._lock = threading.Lock()
         self._timestamps: collections.deque = collections.deque(maxlen=RealtimeStats._FPS_WINDOW_SIZE)
-        # Bounded deque for avg latency — oldest entries dropped automatically
+        # Bounded deque for avg latency â€” oldest entries dropped automatically
         self._durations: collections.deque = collections.deque(maxlen=RealtimeStats._ACCUM_WINDOW_SIZE)
 
     @property
@@ -305,7 +305,7 @@ class ModelNotReadyError(ValueError):
     pass
 
 
-# Concurrency semaphore — created lazily in lifespan() to avoid
+# Concurrency semaphore â€” created lazily in lifespan() to avoid
 # asyncio.Semaphore before event loop exists (breaks Python 3.10+)
 _upscale_semaphore: Optional[asyncio.Semaphore] = None
 
@@ -321,11 +321,11 @@ _processing_count_lock = threading.Lock()
 # Threading lock for plugin_connections list mutations
 _connections_lock = threading.Lock()
 
-# Per-model download lock — prevents concurrent downloads of the same model
+# Per-model download lock â€” prevents concurrent downloads of the same model
 _download_locks: dict[str, asyncio.Lock] = {}
 _download_locks_guard = threading.Lock()
 
-# v1.8.2 — async download-job registry. The synchronous /models/download blocks the
+# v1.8.2 â€” async download-job registry. The synchronous /models/download blocks the
 # HTTP request until a (possibly multi-GB) download finishes, which trips client/proxy
 # timeouts on big models. /models/download-async starts the download in the background
 # and returns a job id the caller polls via /models/download-status/{id}.
@@ -337,10 +337,10 @@ _download_jobs_guard = threading.Lock()
 # "RuntimeError: dictionary changed size during iteration" if a custom model
 # is uploaded or deleted concurrently.
 
-# Benchmark lock — ensures only one benchmark runs at a time (created in lifespan)
+# Benchmark lock â€” ensures only one benchmark runs at a time (created in lifespan)
 _benchmark_lock: Optional[asyncio.Lock] = None
 
-# /models list cache — avoids 40 Path.exists() filesystem checks on every call
+# /models list cache â€” avoids 40 Path.exists() filesystem checks on every call
 _models_cache: Optional[dict] = None
 _models_cache_expiry: float = 0.0
 _MODELS_CACHE_TTL: float = 30.0  # seconds
@@ -353,7 +353,7 @@ def _invalidate_models_cache() -> None:
 
 # Bounded thread pool for CPU-bound upscaling work.
 # Using None in run_in_executor relies on the default pool which Python sizes to
-# min(32, cpu_count+4) — fine but uncontrolled. An explicit executor lets us cap
+# min(32, cpu_count+4) â€” fine but uncontrolled. An explicit executor lets us cap
 # workers at MAX_CPU_WORKERS (default: cpu_count) so we don't over-subscribe the
 # CPU when multiple concurrent requests arrive simultaneously.
 _cpu_executor = ThreadPoolExecutor(
@@ -384,7 +384,7 @@ def _require_api_token(request: Request) -> None:
         return
 
     if not expected_token and not token_store.has_any():
-        logger.warning("No API auth configured (no API_TOKEN env var and no managed tokens) — rejecting request. "
+        logger.warning("No API auth configured (no API_TOKEN env var and no managed tokens) â€” rejecting request. "
                        "Create a token in the plugin, set API_TOKEN, or set API_TOKEN=disable for a trusted LAN.")
         raise HTTPException(status_code=403, detail="API_TOKEN not configured. Set API_TOKEN env var or create a managed token to secure this service.")
     raise HTTPException(status_code=403, detail="Invalid or missing API token")
@@ -410,7 +410,7 @@ def _safe_int_env(name: str, default: int, min_val: Optional[int] = None, max_va
 ONNX_TILE_SIZE = _safe_int_env("ONNX_TILE_SIZE", 512, min_val=64, max_val=2048)
 ONNX_TILE_SIZE_MULTIFRAME = _safe_int_env("ONNX_TILE_SIZE_MULTIFRAME", 256, min_val=64, max_val=1024)
 MAX_UPLOAD_BYTES = _safe_int_env("MAX_UPLOAD_BYTES", 50 * 1024 * 1024, min_val=1024, max_val=500 * 1024 * 1024)
-MAX_IMAGE_PIXELS = 16000 * 16000  # ~256 MP — prevent OOM from decompression bombs
+MAX_IMAGE_PIXELS = 16000 * 16000  # ~256 MP â€” prevent OOM from decompression bombs
 MAX_INPUT_FRAMES = 10  # Safety cap for multi-frame endpoints
 
 # FP16 mixed precision for ONNX inference.
@@ -427,7 +427,7 @@ try:
 except (ValueError, TypeError):
     SCENE_CHANGE_THRESHOLD = 0.35
 
-# ── Feature toggles (all configurable via env vars) ──────────────────────
+# â”€â”€ Feature toggles (all configurable via env vars) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 # Quality metrics: compute PSNR/SSIM after upscaling
 ENABLE_QUALITY_METRICS = os.getenv("ENABLE_QUALITY_METRICS", "true").lower() == "true"
@@ -615,13 +615,13 @@ AVAILABLE_MODELS = {
     },
 
     # ============================================================
-    # === NEW v1.5.3.4 — Next-Gen Models (ONNX) ===
+    # === NEW v1.5.3.4 â€” Next-Gen Models (ONNX) ===
     # ============================================================
     "span-x2": {
         "name": "SPAN x2 (Fastest Quality)",
         "url": "https://github.com/jcj83429/upscaling/raw/f73a3a02874360ec6ced18f8bdd8e43b5d7bba57/2xLiveActionV1_SPAN/2xLiveActionV1_SPAN_490000.onnx",
         "scale": 2,
-        "description": "SPAN — fastest quality model, NTIRE 2023 winner. Best for real-time video.",
+        "description": "SPAN â€” fastest quality model, NTIRE 2023 winner. Best for real-time video.",
         "type": "onnx",
         "category": "nextgen",
         "model_type": "span",
@@ -631,7 +631,7 @@ AVAILABLE_MODELS = {
         "name": "SPAN x4 (Fastest Quality)",
         "url": "https://huggingface.co/mp3pintyo/upscale/resolve/main/4xSPANkendata_fp32.onnx",
         "scale": 4,
-        "description": "SPAN 4x — fast quality upscaling, great speed/quality balance.",
+        "description": "SPAN 4x â€” fast quality upscaling, great speed/quality balance.",
         "type": "onnx",
         "category": "nextgen",
         "model_type": "span",
@@ -641,7 +641,7 @@ AVAILABLE_MODELS = {
         "name": "Real-ESRGAN x2+ (General)",
         "url": "https://huggingface.co/tidus2102/Real-ESRGAN/resolve/main/Real-ESRGAN_x2plus.onnx",
         "scale": 2,
-        "description": "Real-ESRGAN x2 Plus — high quality 2x for photos and live-action.",
+        "description": "Real-ESRGAN x2 Plus â€” high quality 2x for photos and live-action.",
         "type": "onnx",
         "category": "nextgen",
         "model_type": "realesrgan",
@@ -661,7 +661,7 @@ AVAILABLE_MODELS = {
         "name": "SwinIR x4 (Transformer Quality)",
         "url": "https://huggingface.co/rocca/swin-ir-onnx/resolve/main/003_realSR_BSRGAN_DFO_s64w8_SwinIR-M_x4_GAN.onnx",
         "scale": 4,
-        "description": "SwinIR — Swin Transformer for image restoration. Best quality for photos & live-action.",
+        "description": "SwinIR â€” Swin Transformer for image restoration. Best quality for photos & live-action.",
         "type": "onnx",
         "category": "nextgen",
         "model_type": "swinir",
@@ -669,7 +669,7 @@ AVAILABLE_MODELS = {
     },
 
     # ============================================================
-    # === v1.5.3.6 — Community Video-Optimized Models ===
+    # === v1.5.3.6 â€” Community Video-Optimized Models ===
     # ============================================================
 
     # --- Video Real-Time (Ultra-Fast, <3MB) ---
@@ -732,7 +732,7 @@ AVAILABLE_MODELS = {
         "name": "UltraSharp V2 x4 (Best Photo/Video) [non-commercial license]",
         "url": "https://huggingface.co/Kim2091/UltraSharpV2/resolve/main/4x-UltraSharpV2_fp32_op17.onnx",
         "scale": 4,
-        "description": "DAT2 Transformer — best overall quality for photos and video. 49MB. License CC-BY-NC-SA-4.0: personal/home use only, no commercial deployments.",
+        "description": "DAT2 Transformer â€” best overall quality for photos and video. 49MB. License CC-BY-NC-SA-4.0: personal/home use only, no commercial deployments.",
         "type": "onnx",
         "category": "video-quality",
         "model_type": "dat2",
@@ -754,7 +754,7 @@ AVAILABLE_MODELS = {
         "name": "Nomos2 RealPLKSR x4 (Efficient Quality)",
         "url": "https://huggingface.co/notaneimu/onnx-image-models/resolve/main/4xNomos2_realplksr_dysample_256_fp32_fullyoptimized.onnx",
         "scale": 4,
-        "description": "Modern RealPLKSR architecture. 30MB — best quality-to-size ratio for video.",
+        "description": "Modern RealPLKSR architecture. 30MB â€” best quality-to-size ratio for video.",
         "type": "onnx",
         "category": "video-quality",
         "model_type": "realplksr",
@@ -800,7 +800,7 @@ AVAILABLE_MODELS = {
         "name": "APISR x2 (Anime Production Quality)",
         "url": "https://huggingface.co/Xenova/2x_APISR_RRDB_GAN_generator-onnx/resolve/main/onnx/model.onnx",
         "scale": 2,
-        "description": "CVPR 2024 — trained on anime production pipeline. Best anime 2x quality. 18MB.",
+        "description": "CVPR 2024 â€” trained on anime production pipeline. Best anime 2x quality. 18MB.",
         "type": "onnx",
         "category": "anime",
         "model_type": "rrdb",
@@ -810,22 +810,22 @@ AVAILABLE_MODELS = {
         "name": "APISR x3 (General Quality) [self-host required]",
         "url": "https://huggingface.co/Xenova/3x_APISR_RRDB_GAN_generator-onnx/resolve/main/onnx/model.onnx",
         "scale": 3,
-        "description": "CVPR 2024 — general 3x for photos & video. Ideal for 720p to 1080p. ~25MB. [Upstream Xenova repo gated — see docs/MODEL-HOSTING.md to self-host.]",
+        "description": "CVPR 2024 â€” general 3x for photos & video. Ideal for 720p to 1080p. ~25MB. [Upstream Xenova repo gated â€” see docs/MODEL-HOSTING.md to self-host.]",
         "type": "onnx",
         "category": "nextgen",
         "model_type": "rrdb",
-        # Xenova repo returns 401 anonymously — gated or removed upstream. See docs/MODEL-HOSTING.md for self-hosting instructions.
+        # Xenova repo returns 401 anonymously â€” gated or removed upstream. See docs/MODEL-HOSTING.md for self-hosting instructions.
         "available": False
     },
 
     # ============================================================
-    # === NEW v1.8.3.4 — License-checked additions (sha256-pinned) ===
+    # === NEW v1.8.3.4 â€” License-checked additions (sha256-pinned) ===
     # Each entry was download-verified, ONNX-sanity-checked (dynamic H/W,
     # correct output scale) and CPU-benchmarked before adoption.
     # NC-licensed candidates (UltraSharp V2 stays flagged, Adore 2x) were
     # rejected or flagged; see docs/MODEL-EVAL-2026-07.md.
     # ============================================================
-    # === v1.8.3.26 — object detection (discussion #11) ===
+    # === v1.8.3.26 â€” object detection (discussion #11) ===
     # The first entry that is not an upscaler. It is here because the pin could finally
     # be verified rather than asserted: the file was downloaded, its sha384 checked
     # against the OpenVINO model zoo's own model.yml, and the sha256 below computed from
@@ -867,7 +867,7 @@ AVAILABLE_MODELS = {
         "name": "Nomos8k DAT x4 (JPEG Restoration)",
         "url": "https://huggingface.co/huggingworld/onnx-image-models/resolve/main/4xNomos8kDAT.onnx",
         "scale": 4,
-        "description": "DAT trained on Nomos8k — restores heavily JPEG-compressed sources (old rips). 86MB, heavy on CPU (486ms/64px-tile), GPU recommended.",
+        "description": "DAT trained on Nomos8k â€” restores heavily JPEG-compressed sources (old rips). 86MB, heavy on CPU (486ms/64px-tile), GPU recommended.",
         "type": "onnx",
         "category": "film-restore",
         "model_type": "dat",
@@ -880,7 +880,7 @@ AVAILABLE_MODELS = {
         "name": "Fallin Soft x2 (Anime Real-Time)",
         "url": "https://github.com/renarchi/Re-SISR/releases/download/Fallin/2x_Fallin_soft_renarchi_fp32.onnx",
         "scale": 2,
-        "description": "Real-CUGAN-arch anime 2x by the Adore author, permissively licensed. 5.7MB, 17ms/64px-tile CPU — real-time 1080p anime.",
+        "description": "Real-CUGAN-arch anime 2x by the Adore author, permissively licensed. 5.7MB, 17ms/64px-tile CPU â€” real-time 1080p anime.",
         "type": "onnx",
         "category": "anime",
         "model_type": "cugan",
@@ -897,44 +897,44 @@ AVAILABLE_MODELS = {
         "name": "EDVR-M x4 (Video SR - 5 Frame) [self-host required]",
         "url": "https://huggingface.co/kuscheltier/jellyfin-vsr-models/resolve/main/edvr_m_x4.onnx",
         "scale": 4,
-        "description": "EDVR-M — Multi-frame video super-resolution. Uses 5 frames for temporal consistency. Best batch quality. [Requires self-hosted ONNX export — see docs/MODEL-HOSTING.md]",
+        "description": "EDVR-M â€” Multi-frame video super-resolution. Uses 5 frames for temporal consistency. Best batch quality. [Requires self-hosted ONNX export â€” see docs/MODEL-HOSTING.md]",
         "type": "onnx",
         "category": "video-sr",
         "model_type": "edvr",
         "input_frames": 5,
         "self_host": True,
-        # Multi-frame VSR has no public ONNX mirror. User must export from official PyTorch weights — see docs/MODEL-HOSTING.md.
+        # Multi-frame VSR has no public ONNX mirror. User must export from official PyTorch weights â€” see docs/MODEL-HOSTING.md.
         "available": False
     },
     "realbasicvsr-x4": {
         "name": "RealBasicVSR x4 (Video SR - 5 Frame) [self-host required]",
         "url": "https://huggingface.co/kuscheltier/jellyfin-vsr-models/resolve/main/realbasicvsr_x4.onnx",
         "scale": 4,
-        "description": "RealBasicVSR — Recurrent VSR with optical flow (CVPR 2022). Best for real-world degraded video (VHS, DVD, streaming). ~50MB. [Requires self-hosted ONNX — see docs/MODEL-HOSTING.md]",
+        "description": "RealBasicVSR â€” Recurrent VSR with optical flow (CVPR 2022). Best for real-world degraded video (VHS, DVD, streaming). ~50MB. [Requires self-hosted ONNX â€” see docs/MODEL-HOSTING.md]",
         "type": "onnx",
         "category": "video-sr",
         "model_type": "realbasicvsr",
         "input_frames": 5,
         "self_host": True,
-        # Multi-frame VSR has no public ONNX mirror. User must export from official PyTorch weights — see docs/MODEL-HOSTING.md.
+        # Multi-frame VSR has no public ONNX mirror. User must export from official PyTorch weights â€” see docs/MODEL-HOSTING.md.
         "available": False
     },
     "animesr-v2-x4": {
         "name": "AnimeSR v2 x4 (Anime Video SR - 5 Frame) [self-host required]",
         "url": "https://huggingface.co/kuscheltier/jellyfin-vsr-models/resolve/main/animesr_v2_x4.onnx",
         "scale": 4,
-        "description": "AnimeSR v2 — Anime-specialized multi-frame VSR (NeurIPS 2022). Preserves line art and flat colors. ~30MB. [Requires self-hosted ONNX — see docs/MODEL-HOSTING.md]",
+        "description": "AnimeSR v2 â€” Anime-specialized multi-frame VSR (NeurIPS 2022). Preserves line art and flat colors. ~30MB. [Requires self-hosted ONNX â€” see docs/MODEL-HOSTING.md]",
         "type": "onnx",
         "category": "video-sr",
         "model_type": "animesr",
         "input_frames": 5,
         "self_host": True,
-        # Multi-frame VSR has no public ONNX mirror. User must export from official PyTorch weights — see docs/MODEL-HOSTING.md.
+        # Multi-frame VSR has no public ONNX mirror. User must export from official PyTorch weights â€” see docs/MODEL-HOSTING.md.
         "available": False
     },
 
     # ============================================================
-    # === VULKAN Models (ncnn — for AMD pre-RDNA2, Intel iGPU) ===
+    # === VULKAN Models (ncnn â€” for AMD pre-RDNA2, Intel iGPU) ===
     # ============================================================
     "ncnn-realesrgan-x4": {
         "name": "Real-ESRGAN x4 (Vulkan GPU)",
@@ -983,14 +983,14 @@ AVAILABLE_MODELS = {
 
     # ============================================================
     # === RIFE Models (Frame Interpolation) ===
-    # URLs point to yuvraj108c/rife-onnx — community ONNX exports of Practical-RIFE.
+    # URLs point to yuvraj108c/rife-onnx â€” community ONNX exports of Practical-RIFE.
     # All three variants verified live (HEAD 200) as of v1.6.1.12 release.
     # ============================================================
     "rife-v4.7": {
         "name": "RIFE v4.7 (Fast Frame Interpolation)",
         "url": "https://huggingface.co/yuvraj108c/rife-onnx/resolve/main/rife47_ensemble_True_scale_1_sim.onnx",
         "scale": 1,
-        "description": "RIFE v4.7 — Faster Frame Interpolation (2x FPS). Ensemble enabled, scale=1. Lighter model for real-time use. 21MB.",
+        "description": "RIFE v4.7 â€” Faster Frame Interpolation (2x FPS). Ensemble enabled, scale=1. Lighter model for real-time use. 21MB.",
         "type": "onnx",
         "category": "interpolation",
         "model_type": "rife",
@@ -1001,7 +1001,7 @@ AVAILABLE_MODELS = {
         "name": "RIFE v4.8 (Balanced Frame Interpolation)",
         "url": "https://huggingface.co/yuvraj108c/rife-onnx/resolve/main/rife48_ensemble_True_scale_1_sim.onnx",
         "scale": 1,
-        "description": "RIFE v4.8 — Balanced Frame Interpolation (2x FPS). Middle ground between v4.7 (fast) and v4.9 (quality). 21MB.",
+        "description": "RIFE v4.8 â€” Balanced Frame Interpolation (2x FPS). Middle ground between v4.7 (fast) and v4.9 (quality). 21MB.",
         "type": "onnx",
         "category": "interpolation",
         "model_type": "rife",
@@ -1012,7 +1012,7 @@ AVAILABLE_MODELS = {
         "name": "RIFE v4.9 (Quality Frame Interpolation)",
         "url": "https://huggingface.co/yuvraj108c/rife-onnx/resolve/main/rife49_ensemble_True_scale_1_sim.onnx",
         "scale": 1,
-        "description": "RIFE v4.9 — Best-quality Real-Time Frame Interpolation (2x FPS). Ensemble enabled, scale=1. Recommended for film/anime. 21MB.",
+        "description": "RIFE v4.9 â€” Best-quality Real-Time Frame Interpolation (2x FPS). Ensemble enabled, scale=1. Recommended for film/anime. 21MB.",
         "type": "onnx",
         "category": "interpolation",
         "model_type": "rife",
@@ -1022,7 +1022,7 @@ AVAILABLE_MODELS = {
     },
 
     # ============================================================
-    # === Frame-Interpolation — second architectures (v1.8.2) ===
+    # === Frame-Interpolation â€” second architectures (v1.8.2) ===
     # RIFE (above) is the only self-hosted interpolation arch. IFRNet and CAIN
     # are wired into the (architecture-adaptive) interpolation engine but are
     # experimental + available:False: there is no checksum-verified public ONNX
@@ -1031,10 +1031,10 @@ AVAILABLE_MODELS = {
     # (IFRNet = 3-input incl. timestep; CAIN = 2-input, fixed midpoint).
     # ============================================================
     "ifrnet": {
-        "name": "IFRNet (Frame Interpolation — experimental)",
+        "name": "IFRNet (Frame Interpolation â€” experimental)",
         "url": "https://github.com/ltkong218/IFRNet",
         "scale": 1,
-        "description": "IFRNet intermediate-flow interpolation (2x FPS). Second interpolation architecture beside RIFE — arbitrary-timestep capable. Experimental: self-host an ONNX export in the models dir (no verified public export yet).",
+        "description": "IFRNet intermediate-flow interpolation (2x FPS). Second interpolation architecture beside RIFE â€” arbitrary-timestep capable. Experimental: self-host an ONNX export in the models dir (no verified public export yet).",
         "type": "onnx",
         "category": "interpolation",
         "model_type": "ifrnet",
@@ -1045,10 +1045,10 @@ AVAILABLE_MODELS = {
         "available": False
     },
     "cain": {
-        "name": "CAIN (Frame Interpolation — experimental)",
+        "name": "CAIN (Frame Interpolation â€” experimental)",
         "url": "https://github.com/myungsub/CAIN",
         "scale": 1,
-        "description": "CAIN channel-attention interpolation (2x FPS, fixed midpoint). Second interpolation architecture beside RIFE — 2-input, no timestep. Experimental: self-host an ONNX export in the models dir (no verified public export yet).",
+        "description": "CAIN channel-attention interpolation (2x FPS, fixed midpoint). Second interpolation architecture beside RIFE â€” 2-input, no timestep. Experimental: self-host an ONNX export in the models dir (no verified public export yet).",
         "type": "onnx",
         "category": "interpolation",
         "model_type": "cain",
@@ -1063,13 +1063,13 @@ AVAILABLE_MODELS = {
     # === Face-Restore Models (v1.6.1.7) ===
     # ============================================================
     # Restore faces in low-quality / old video. Works independently of the
-    # main upscaler — detect faces via OpenCV Haar cascade, run face model on
+    # main upscaler â€” detect faces via OpenCV Haar cascade, run face model on
     # each 512x512 crop, paste back with feathered-edge alpha blending.
     "gfpgan-v1.4": {
         "name": "GFPGAN v1.4 (Face Restore)",
         "url": "https://huggingface.co/facefusion/models-3.0.0/resolve/main/gfpgan_1.4.onnx",
         "scale": 1,
-        "description": "GFPGAN v1.4 — Tencent ARC's face restoration GAN. Restores heavily degraded faces. 512x512 crops. Apache 2.0. Mirrored via facefusion/models-3.0.0. ~340MB.",
+        "description": "GFPGAN v1.4 â€” Tencent ARC's face restoration GAN. Restores heavily degraded faces. 512x512 crops. Apache 2.0. Mirrored via facefusion/models-3.0.0. ~340MB.",
         "type": "onnx",
         "category": "face_restore",
         "model_type": "face_restore",
@@ -1135,7 +1135,7 @@ AVAILABLE_MODELS = {
         "model_type": "drct",
         "license": "CC-BY-4.0",
         "attribution": "Philip Hofmann / Helaman (4xRealWebPhoto_v4_drct-l)",
-        # 2026-07: original URL had no ONNX; Phhofm export verified to LOAD but has a fixed 64px input shape — incompatible with dynamic tiling. Candidate alternative (unverified): huggingworld 4xNomos2_hq_drct-l.onnx (184MB).
+        # 2026-07: original URL had no ONNX; Phhofm export verified to LOAD but has a fixed 64px input shape â€” incompatible with dynamic tiling. Candidate alternative (unverified): huggingworld 4xNomos2_hq_drct-l.onnx (184MB).
         "available": False
     },
 
@@ -1167,7 +1167,7 @@ AVAILABLE_MODELS = {
         "license": "MIT",
         "attribution": "hzwer/Practical-RIFE; TAS-Models-Host ONNX export",
         "sha256": "7fa9a1aee51299fa6b3b92da4fe0c6c3dc74a9cdb3cf956e2702d401fe5ca87d",
-        # 2026-07: yuvraj108c repo only hosts rife 4.7-4.9 — repointed to the TAS op21-slim export (ORT load verified; 1-input 7-channel signature).
+        # 2026-07: yuvraj108c repo only hosts rife 4.7-4.9 â€” repointed to the TAS op21-slim export (ORT load verified; 1-input 7-channel signature).
         "available": True
     },
 
@@ -1187,7 +1187,7 @@ AVAILABLE_MODELS = {
         "license": "CC-BY-4.0",
         "attribution": "Philip Hofmann / Helaman (2xHFA2kOmniSR)",
         "sha256": "54a53c3af07620222eeda969468415d76c19a4b1b9f209e8803f5575e5b87bbe",
-        # 2026-07: Phhofm/models-omnisr HF repo gone — repointed to the author's own GitHub release export (ORT load+infer verified).
+        # 2026-07: Phhofm/models-omnisr HF repo gone â€” repointed to the author's own GitHub release export (ORT load+infer verified).
         "available": True
     },
     "omnisr-x4": {
@@ -1201,7 +1201,7 @@ AVAILABLE_MODELS = {
         "license": "Apache-2.0",
         "attribution": "Francis0625/Omni-SR official weights; huggingworld ONNX export",
         "sha256": "c82256a5b8ac7543ed5ddbbc4ff531233d0b42ef159ea6c31060c5ed5924fd1e",
-        # 2026-07: Phhofm/models-omnisr HF repo gone — repointed to the official-weights export.
+        # 2026-07: Phhofm/models-omnisr HF repo gone â€” repointed to the official-weights export.
         "available": True
     },
 
@@ -1241,7 +1241,7 @@ AVAILABLE_MODELS = {
         "license": "Apache-2.0",
         "attribution": "wzhouxiff/RestoreFormerPlusPlus; FaceFusion models mirror",
         "sha256": "164818b70d1745da4108a45c9263b05452236d14ac0ffab2202af0ac4a438195",
-        # 2026-07: upstream HF repo gone — repointed to the FaceFusion assets mirror. Size corrected (~294MB, not 50MB).
+        # 2026-07: upstream HF repo gone â€” repointed to the FaceFusion assets mirror. Size corrected (~294MB, not 50MB).
         "available": True
     },
 
@@ -1304,7 +1304,7 @@ AVAILABLE_MODELS = {
         "license": "Apache-2.0",
         "attribution": "Alibaba DAMO GPEN; FaceFusion models mirror",
         "sha256": "d5f066b9068a8b74217f9712e28e875a6144629b108a6f7355acbdb3a2832c54",
-        # 2026-07: yangxy/GPEN HF repo gone — repointed to the FaceFusion assets mirror (same weights family as gfpgan/codeformer entries).
+        # 2026-07: yangxy/GPEN HF repo gone â€” repointed to the FaceFusion assets mirror (same weights family as gfpgan/codeformer entries).
         "available": True
     },
     "nafnet-denoise": {
@@ -1318,7 +1318,7 @@ AVAILABLE_MODELS = {
         "license": "MIT",
         "attribution": "megvii-research/NAFNet; deepghs ONNX export",
         "sha256": "9b8d0cf8a9563b04213e0253c6d7bf595beb49d77824bfed8facee7c59ba4d40",
-        # 2026-07: megvii HF repo gone — repointed to the deepghs image_restoration export (SIDD width64). Size corrected.
+        # 2026-07: megvii HF repo gone â€” repointed to the deepghs image_restoration export (SIDD width64). Size corrected.
         "available": True
     },
 
@@ -1330,7 +1330,7 @@ AVAILABLE_MODELS = {
     # cleanup, the real-world Jellyfin use case (h264/h265 frames).
     # ============================================================
 
-    # Real-ESRGAN general v3 — the modern tiny all-rounder. Dynamic
+    # Real-ESRGAN general v3 â€” the modern tiny all-rounder. Dynamic
     # input shape, ~5MB. Key is "realesr-general" (NOT "realesrgan"),
     # so it is unaffected by the benchmark 64px heuristic.
     "realesr-general-x4v3": {
@@ -1354,7 +1354,7 @@ AVAILABLE_MODELS = {
         "available": True
     },
 
-    # Compressed/web-source specialists — trained on degraded inputs,
+    # Compressed/web-source specialists â€” trained on degraded inputs,
     # the closest match to real streaming frames.
     "realwebphoto-v4-dat2-x4": {
         "name": "RealWebPhoto v4 DAT2 x4 (Compressed Sources)",
@@ -1377,7 +1377,7 @@ AVAILABLE_MODELS = {
         "available": True
     },
 
-    # 1x artifact-cleanup pre-passes (no upscale) — run before a 4x
+    # 1x artifact-cleanup pre-passes (no upscale) â€” run before a 4x
     # model on heavily compressed streams.
     "dejpg-realplksr-1x": {
         "name": "DeJPEG RealPLKSR 1x (Artifact Cleanup Pre-Pass)",
@@ -1468,7 +1468,7 @@ AVAILABLE_MODELS = {
 }
 
 
-# Backward-compatibility aliases — map legacy model keys (from saved user configs
+# Backward-compatibility aliases â€” map legacy model keys (from saved user configs
 # in v1.6.1.11 and earlier) to their v1.6.1.12 replacements. Resolved in
 # _resolve_model_key() below so both old key + new key work transparently.
 MODEL_ALIASES: dict[str, str] = {
@@ -1553,7 +1553,7 @@ def _session_input_is_fp16(session) -> bool:
     """Return True iff the ONNX session's primary input expects tensor(float16).
 
     Guards the FP16-cast paths in _onnx_infer_tile / _onnx_infer_multiframe_tile:
-    state.use_fp16 alone is not sufficient — the loaded model must also have been
+    state.use_fp16 alone is not sufficient â€” the loaded model must also have been
     exported with float16 inputs, otherwise session.run() raises INVALID_ARGUMENT
     (see issue #67).
     """
@@ -1566,7 +1566,7 @@ def _session_input_is_fp16(session) -> bool:
 def _parse_clinfo_intel_name(clinfo_output: str) -> Optional[str]:
     """Extract an Intel GPU name (e.g. 'Intel(R) Arc(TM) A380 Graphics') from
     `clinfo --list` output. Used by the WSL2 /dev/dxg detection branch
-    (see issue #66 — Windows 11 + Docker Desktop + Intel Arc).
+    (see issue #66 â€” Windows 11 + Docker Desktop + Intel Arc).
     """
     for line in clinfo_output.splitlines():
         line = line.strip()
@@ -1597,7 +1597,7 @@ def detect_hardware():
 
     gpu_detected = False
     
-    # Try NVIDIA GPU first (nvidia-smi) — enumerate ALL GPUs
+    # Try NVIDIA GPU first (nvidia-smi) â€” enumerate ALL GPUs
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-gpu=index,name,memory.total", "--format=csv,noheader,nounits"],
@@ -1885,12 +1885,12 @@ def _register_custom_models_from_disk(models_dir, available_models) -> int:
 
     /models/upload persists the .onnx into MODELS_DIR plus a small
     <name>.custom.json sidecar with the validated metadata, but the
-    AVAILABLE_MODELS entry itself only lived in memory — so every container
+    AVAILABLE_MODELS entry itself only lived in memory â€” so every container
     restart silently dropped uploaded/imported models from the catalog while
     their files kept sitting in the volume. This scans the sidecars and
     restores the registry entries. The sidecar values were validated by the
     upload endpoint (ONNX InferenceSession + 4D shape) before being written,
-    so they are trusted here — no model load at startup.
+    so they are trusted here â€” no model load at startup.
 
     Returns the number of restored models. Pure function over its arguments
     so tests can drive it with a tmp dir + plain dict.
@@ -1914,7 +1914,7 @@ def _register_custom_models_from_disk(models_dir, available_models) -> int:
                 logger.warning(f"Skipping custom-model sidecar without model file: {sidecar.name}")
                 continue
             if model_name in available_models:
-                continue  # built-in or already restored — never shadow
+                continue  # built-in or already restored â€” never shadow
             # v1.8.3.25 - the category has to survive the restart too. Hardcoding
             # "super-resolution" here would turn an imported detector back into an
             # upscaler on the next container start, and the model dropdowns would
@@ -1950,7 +1950,7 @@ async def lifespan(app: FastAPI):
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Restore custom/imported models from their sidecar files (v1.8.3.7 —
+    # Restore custom/imported models from their sidecar files (v1.8.3.7 â€”
     # previously they vanished from the catalog on every restart).
     restored = _register_custom_models_from_disk(MODELS_DIR, AVAILABLE_MODELS)
     if restored:
@@ -2134,7 +2134,7 @@ async def load_opencv_model(model_name: str, model_info: dict, model_path: Path)
             sr.setPreferableBackend(cv2.dnn.DNN_BACKEND_DEFAULT)
             sr.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
             if state.use_gpu and cuda_device_count == 0:
-                logger.info("No CUDA device available — using CPU backend for OpenCV DNN")
+                logger.info("No CUDA device available â€” using CPU backend for OpenCV DNN")
         
         with _model_lock:
             state.cv_model = sr
@@ -2195,7 +2195,7 @@ async def load_model(model_name: str) -> bool:
     model_path = get_model_path(model_name)
     model_type = model_info.get("type", "pb")
 
-    # ncnn models are bundled with the realsr-ncnn-vulkan package — no file on disk needed
+    # ncnn models are bundled with the realsr-ncnn-vulkan package â€” no file on disk needed
     if model_type != "ncnn" and not model_path.exists():
         logger.error(f"Model not found: {model_path}")
         return False
@@ -2216,7 +2216,7 @@ async def load_ncnn_model(model_name: str, model_info: dict, model_path: Path) -
     Supports pre-RDNA2 AMD (RX 5700 etc.), Intel iGPUs, and any Vulkan device.
     Uses realsr-ncnn-vulkan-python wrapper or raw ncnn bindings."""
     if not NCNN_AVAILABLE:
-        logger.error("ncnn/Vulkan not available — install realsr-ncnn-vulkan-python or ncnn-vulkan")
+        logger.error("ncnn/Vulkan not available â€” install realsr-ncnn-vulkan-python or ncnn-vulkan")
         state.last_load_error = "ncnn-Vulkan not installed"
         return False
 
@@ -2315,7 +2315,7 @@ def upscale_with_ncnn(img: np.ndarray) -> np.ndarray:
             result_rgb = np.array(result_pil)
             return cv2.cvtColor(result_rgb, cv2.COLOR_RGB2BGR)
         else:
-            # Raw ncnn — manual tile-based inference with weighted blending
+            # Raw ncnn â€” manual tile-based inference with weighted blending
             h, w = img.shape[:2]
             tile_size = ONNX_TILE_SIZE
             overlap = 32
@@ -2355,7 +2355,7 @@ def upscale_with_ncnn(img: np.ndarray) -> np.ndarray:
                     ex = upscaler.create_extractor()
                     ex.input("data", mat_in)
                     _, mat_out = ex.extract("output")
-                    # ncnn outputs CHW planar layout — reshape to CHW then transpose to HWC
+                    # ncnn outputs CHW planar layout â€” reshape to CHW then transpose to HWC
                     raw = np.array(mat_out)
                     result_tile = raw.reshape(3, th * scale, tw * scale).transpose(1, 2, 0).astype(np.float32)
 
@@ -2464,11 +2464,11 @@ async def load_onnx_model(model_name: str, model_info: dict, model_path: Path) -
         logger.info(f"Available ONNX Runtime providers: {available_providers}")
         logger.info(f"GPU device ID: {device_id}, SKIP_TENSORRT: {skip_tensorrt}")
 
-        # Build provider chains — CUDA first (safe), TensorRT probed separately
+        # Build provider chains â€” CUDA first (safe), TensorRT probed separately
         provider_chains = []
 
         if state.use_gpu:
-            # Chain 1: CUDA + CPU (most reliable GPU path — try FIRST)
+            # Chain 1: CUDA + CPU (most reliable GPU path â€” try FIRST)
             if 'CUDAExecutionProvider' in available_providers:
                 provider_chains.append({
                     'providers': ['CUDAExecutionProvider', 'CPUExecutionProvider'],
@@ -2494,7 +2494,7 @@ async def load_onnx_model(model_name: str, model_info: dict, model_path: Path) -
                 })
 
 
-        # Chain: CoreML + CPU (macOS with Apple Silicon — M1/M2/M3/M4/M5)
+        # Chain: CoreML + CPU (macOS with Apple Silicon â€” M1/M2/M3/M4/M5)
         if platform.system() == "Darwin" and platform.machine() == "arm64":
             try:
                 if "CoreMLExecutionProvider" in available_providers:
@@ -2510,7 +2510,7 @@ async def load_onnx_model(model_name: str, model_info: dict, model_path: Path) -
                         session = ort.InferenceSession(str(model_path), providers=providers_to_try)
                         active = session.get_providers()
                         if "CoreMLExecutionProvider" in active:
-                            logger.info("CoreML provider active — using Apple Neural Engine")
+                            logger.info("CoreML provider active â€” using Apple Neural Engine")
                             with _model_lock:
                                 state.onnx_session = session
                                 state.current_model = model_name
@@ -2564,7 +2564,7 @@ async def load_onnx_model(model_name: str, model_info: dict, model_path: Path) -
                 gpu_providers = [p for p in actual_providers if p != 'CPUExecutionProvider']
 
                 if state.use_gpu and gpu_providers:
-                    # GPU is active — verify with a real inference test
+                    # GPU is active â€” verify with a real inference test
                     # Build test tensor from actual model input shape (handles both
                     # single-frame (1,3,H,W) and multi-frame (1,5,3,H,W) models)
                     try:
@@ -2597,7 +2597,7 @@ async def load_onnx_model(model_name: str, model_info: dict, model_path: Path) -
                 last_error = e
                 logger.warning(f"Chain {chain_idx + 1} ({chain_name}) failed: {e}")
 
-                # OpenVINO GPU failed — try CPU device before giving up
+                # OpenVINO GPU failed â€” try CPU device before giving up
                 if 'OpenVINOExecutionProvider' in providers and 'GPU' in str(e):
                     try:
                         logger.info("OpenVINO GPU failed, trying OpenVINO CPU device...")
@@ -2631,7 +2631,7 @@ async def load_onnx_model(model_name: str, model_info: dict, model_path: Path) -
                 None, _probe_tensorrt_subprocess, str(model_path), device_id
             )
             if trt_ok:
-                logger.info("TensorRT probe succeeded — reloading with TensorRT...")
+                logger.info("TensorRT probe succeeded â€” reloading with TensorRT...")
                 try:
                     trt_opts = ort.SessionOptions()
                     trt_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -2654,7 +2654,7 @@ async def load_onnx_model(model_name: str, model_info: dict, model_path: Path) -
                 except Exception as trt_err:
                     logger.warning(f"TensorRT reload failed (keeping CUDA): {trt_err}")
             else:
-                logger.info("TensorRT probe failed — keeping CUDA (no context poisoning)")
+                logger.info("TensorRT probe failed â€” keeping CUDA (no context poisoning)")
 
         with _model_lock:
             # Release old ONNX session before replacing to free GPU memory
@@ -2680,7 +2680,7 @@ async def load_onnx_model(model_name: str, model_info: dict, model_path: Path) -
         state.model_last_used[model_name] = time.time()
         logger.info(f"ONNX model {model_name} loaded successfully with: {state.providers}")
 
-        # Auto-reset circuit breaker on successful model load — clears stale
+        # Auto-reset circuit breaker on successful model load â€” clears stale
         # trips from the previous model that may have caused the failures.
         with _circuit_lock:
             if state.circuit_open or state.circuit_half_open:
@@ -2722,7 +2722,7 @@ async def download_model(model_name: str, progress_cb=None) -> bool:
 
     progress_cb(downloaded_bytes, total_bytes) is called while streaming so a
     caller can surface real progress; total_bytes is 0 when the server sends no
-    Content-Length. Added in v1.8.3.14 — the plugin now offers a download button
+    Content-Length. Added in v1.8.3.14 â€” the plugin now offers a download button
     for every catalog model, and a 300 MB fetch with no feedback reads as a hang.
     """
     if model_name not in AVAILABLE_MODELS:
@@ -2758,10 +2758,10 @@ async def download_model(model_name: str, progress_cb=None) -> bool:
         try:
             download_url = model_info.get("url")
 
-            # ncnn models are bundled with the realsr-ncnn-vulkan package — no download needed
+            # ncnn models are bundled with the realsr-ncnn-vulkan package â€” no download needed
             if not download_url:
                 if model_info.get("type") == "ncnn":
-                    logger.info(f"Model {model_name} is bundled (ncnn) — no download needed")
+                    logger.info(f"Model {model_name} is bundled (ncnn) â€” no download needed")
                     return True
                 raise ValueError(f"No download URL for model {model_name}")
 
@@ -2797,7 +2797,7 @@ async def download_model(model_name: str, progress_cb=None) -> bool:
                     if progress_cb is not None:
                         progress_cb(done, total or done)
 
-            # Integrity gate — catalog entries may pin a sha256; verify BEFORE the
+            # Integrity gate â€” catalog entries may pin a sha256; verify BEFORE the
             # file becomes visible as a valid model (supply-chain / corruption guard).
             expected_sha = (model_info.get("sha256") or "").strip().lower()
             if expected_sha:
@@ -2813,7 +2813,7 @@ async def download_model(model_name: str, progress_cb=None) -> bool:
                     )
                 logger.info(f"Model {model_name} sha256 verified")
 
-            # Atomic rename — prevents partial files surviving crashes
+            # Atomic rename â€” prevents partial files surviving crashes
             temp_path.rename(model_path)
 
             size_mb = model_path.stat().st_size / 1024 / 1024
@@ -2822,7 +2822,7 @@ async def download_model(model_name: str, progress_cb=None) -> bool:
 
         except Exception as e:
             logger.error(f"Failed to download model {model_name}: {e}")
-            # Only clean up temp file — never delete a pre-existing valid model
+            # Only clean up temp file â€” never delete a pre-existing valid model
             if temp_path.exists():
                 temp_path.unlink()
             return False
@@ -3144,7 +3144,7 @@ def _run_onnx_tiled(img_rgb: np.ndarray, tile_size: int, overlap: int,
 
             tile = img_rgb[y_start:y_end, x_start:x_end]
 
-            # Inference using captured session (no lock needed — snapshot is consistent)
+            # Inference using captured session (no lock needed â€” snapshot is consistent)
             out_tile = _onnx_infer_tile(tile, session, input_name, output_name)
 
             # Compute output coordinates
@@ -3201,7 +3201,7 @@ def upscale_with_onnx(img: np.ndarray) -> np.ndarray:
         scale = state.onnx_model_scale or 4
 
     # Detect static-shape models (e.g. realesrgan-x4 expects [1,3,64,64]).
-    # These models MUST be tiled to their native spatial size — sending an
+    # These models MUST be tiled to their native spatial size â€” sending an
     # arbitrary frame directly causes INVALID_ARGUMENT on any backend and
     # Conv_1 RUNTIME_EXCEPTION on DirectML.
     model_input = session.get_inputs()[0]
@@ -3209,7 +3209,7 @@ def upscale_with_onnx(img: np.ndarray) -> np.ndarray:
     if len(input_shape) == 4:
         _, _, sh, sw = input_shape
         if isinstance(sh, int) and sh > 0 and isinstance(sw, int) and sw > 0:
-            # Static spatial dims — force tile size to model's native size
+            # Static spatial dims â€” force tile size to model's native size
             static_tile = min(sh, sw)
             if tile_size != static_tile:
                 logger.info(f"Static-shape model detected ({sh}x{sw}): forcing tile_size={static_tile} (was {tile_size})")
@@ -3221,7 +3221,7 @@ def upscale_with_onnx(img: np.ndarray) -> np.ndarray:
         try:
             result = _run_onnx_tiled(img_rgb, tile_size, overlap, session,
                                      input_name, output_name, scale)
-            # Success — persist working tile size for future requests
+            # Success â€” persist working tile size for future requests
             if tile_size != ONNX_TILE_SIZE:
                 with _model_lock:
                     logger.info(f"Updating global ONNX_TILE_SIZE from {ONNX_TILE_SIZE} to {tile_size} after recovery")
@@ -3304,7 +3304,7 @@ def upscale_multiframe(frames: list) -> np.ndarray:
         result_rgb = np.clip(result_rgb * 255.0, 0, 255).astype(np.uint8)
         return cv2.cvtColor(result_rgb, cv2.COLOR_RGB2BGR)
 
-    # Tiled processing — same grid for all frames
+    # Tiled processing â€” same grid for all frames
     out_h, out_w = h * scale, w * scale
     output = np.zeros((out_h, out_w, 3), dtype=np.float32)
     weight = np.zeros((out_h, out_w, 3), dtype=np.float32)
@@ -3375,7 +3375,7 @@ def load_rife_model(model_name: str = "rife-v4.9") -> bool:
     upscaling model stored in state.onnx_session.
     """
     if not ONNX_AVAILABLE:
-        logger.error("ONNX Runtime not available — cannot load RIFE model")
+        logger.error("ONNX Runtime not available â€” cannot load RIFE model")
         return False
 
     if model_name not in AVAILABLE_MODELS:
@@ -3393,7 +3393,7 @@ def load_rife_model(model_name: str = "rife-v4.9") -> bool:
         return False
 
     try:
-        # Build provider list — prefer GPU, fall back to CPU
+        # Build provider list â€” prefer GPU, fall back to CPU
         available_providers = ort.get_available_providers()
         providers = []
         if 'CUDAExecutionProvider' in available_providers and state.use_gpu:
@@ -3456,7 +3456,7 @@ def interpolate_frame_rife(frame1: np.ndarray, frame2: np.ndarray,
     f1_t = np.transpose(f1, (2, 0, 1))[np.newaxis, ...]
     f2_t = np.transpose(f2, (2, 0, 1))[np.newaxis, ...]
 
-    # Concatenate on channel dimension -> (1, 6, H, W) — two RGB frames
+    # Concatenate on channel dimension -> (1, 6, H, W) â€” two RGB frames
     combined = np.concatenate([f1_t, f2_t], axis=1)
 
     # Timestep tensor (1, 1, H, W) filled with the timestep value
@@ -3470,7 +3470,7 @@ def interpolate_frame_rife(frame1: np.ndarray, frame2: np.ndarray,
         # Single input: concatenated frames (1, 6, H, W)
         feed = {input_names[0]: combined}
     elif len(input_names) == 2:
-        # v1.8.2 — two-input models come in two architecture flavours; disambiguate by
+        # v1.8.2 â€” two-input models come in two architecture flavours; disambiguate by
         # the first input's channel count instead of assuming RIFE:
         #   * 6ch  -> RIFE-style [concatenated frames, timestep]
         #   * 3ch  -> CAIN-style [img0, img1] (fixed midpoint, no timestep input)
@@ -3481,7 +3481,7 @@ def interpolate_frame_rife(frame1: np.ndarray, frame2: np.ndarray,
         else:
             feed = {input_names[0]: combined, input_names[1]: ts}
     elif len(input_names) == 3:
-        # Three inputs: frame1, frame2, timestep — RIFE 3-input AND IFRNet (img0, img1, embt)
+        # Three inputs: frame1, frame2, timestep â€” RIFE 3-input AND IFRNet (img0, img1, embt)
         feed = {input_names[0]: f1_t, input_names[1]: f2_t, input_names[2]: ts}
     else:
         # Fallback: try frames + timestep as first two inputs
@@ -3521,7 +3521,7 @@ _face_restore_lock = threading.Lock()
 def _get_face_detector():
     """Return a cached OpenCV Haar cascade face detector.
 
-    Uses OpenCV's bundled haarcascade_frontalface_default.xml — no external
+    Uses OpenCV's bundled haarcascade_frontalface_default.xml â€” no external
     download, works on every OpenCV install. Lazy-loaded on first use.
     """
     global _face_cascade_path_cache
@@ -3539,12 +3539,12 @@ def _get_face_detector():
 def load_face_restore_model(model_name: str) -> dict:
     """Load a face-restore ONNX model into memory (GFPGAN / CodeFormer).
 
-    Unlike the main upscaler, we don't auto-download here — that's the
+    Unlike the main upscaler, we don't auto-download here â€” that's the
     download_model_endpoint's job. If the file isn't present, surface a
     clear error so the UI can prompt the user to run a download first.
     """
     if not ONNX_AVAILABLE:
-        raise RuntimeError("ONNX Runtime not available — face restore disabled")
+        raise RuntimeError("ONNX Runtime not available â€” face restore disabled")
     if model_name not in AVAILABLE_MODELS:
         raise ValueError(f"Unknown model {model_name}")
     model_info = AVAILABLE_MODELS[model_name]
@@ -3660,7 +3660,7 @@ def restore_faces_in_frame(img: np.ndarray, max_faces: int = 6) -> tuple:
 
     detector = _get_face_detector()
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # Conservative detection params — avoid too many false positives
+    # Conservative detection params â€” avoid too many false positives
     faces = detector.detectMultiScale(
         gray,
         scaleFactor=1.15,
@@ -3670,7 +3670,7 @@ def restore_faces_in_frame(img: np.ndarray, max_faces: int = 6) -> tuple:
     if len(faces) == 0:
         return img, 0
 
-    # Limit face count — runaway detection on busy scenes would tank frame rate
+    # Limit face count â€” runaway detection on busy scenes would tank frame rate
     faces = list(faces)[:max_faces]
     output = img.copy()
     input_size = state.face_restore_input_size
@@ -3815,7 +3815,7 @@ async def upscale_frame_realtime(frame: np.ndarray, session, local_state) -> np.
 
     loop = asyncio.get_running_loop()
     if static_tile and (h != static_tile or w != static_tile):
-        # Static-shape model with frame larger than native tile — must tile
+        # Static-shape model with frame larger than native tile â€” must tile
         def _infer_static_tiled():
             ts = static_tile
             ovlp = min(8, ts // 4)
@@ -3929,7 +3929,7 @@ def run_benchmark(test_size: int = 256) -> dict:
     # Dynamic-shape models accept any tile (use a small, fast 64px tile);
     # fixed-shape models such as "realesrgan-x4-256" bake a 256x256 input
     # into the graph and raise a Reshape error during warmup if fed 64x64
-    # (FIX-3 / issue #70 — the "Reshape" failure Gemini misattributed to the
+    # (FIX-3 / issue #70 â€” the "Reshape" failure Gemini misattributed to the
     # GPU). Read the real shape from the loaded ONNX session instead of
     if state.current_model_type == "onnx":
         fixed_dim = None
@@ -4054,7 +4054,7 @@ async def logs_stream(request: Request):
 # the dashboard showed GPU active while the System tab said "CPU only", and
 # /gpu-verify returned "using_gpu": false even with OpenVINO in the active
 # provider list. Report the truth derived from the live provider list. Only
-# the *displayed* value changes here — control flow still keys off
+# the *displayed* value changes here â€” control flow still keys off
 # state.use_gpu.
 _NON_CPU_PROVIDERS = frozenset({
     "CUDAExecutionProvider", "TensorrtExecutionProvider",
@@ -4086,7 +4086,7 @@ async def health():
         "gpu_name": state.gpu_name,
         "circuit_open": state.circuit_open
     }
-    # Always return 200 for /health — the plugin uses IsSuccessStatusCode to
+    # Always return 200 for /health â€” the plugin uses IsSuccessStatusCode to
     # decide whether to show the AI button.  Returning 503 here hid the button
     # whenever the circuit tripped, preventing any recovery path.  The
     # "degraded" status field already signals the problem to the dashboard.
@@ -4169,7 +4169,7 @@ def recommend_model():
     """Hardware-aware model recommendation.
 
     Picks a model + scale the detected hardware can actually run in reasonable
-    time — addressing the #1 setup friction (pushing realesrgan-x4 onto a weak
+    time â€” addressing the #1 setup friction (pushing realesrgan-x4 onto a weak
     CPU box and hitting the seconds-per-frame wall). Pure function of the
     detected state (providers / gpu_list / vram / cpu_cores), so it is unit-testable.
     """
@@ -4188,35 +4188,35 @@ def recommend_model():
         vram = 0
     cores = state.cpu_cores or 0
 
-    # DirectML (AMD/Intel on Windows) — static-shape models like realesrgan-x4
+    # DirectML (AMD/Intel on Windows) â€” static-shape models like realesrgan-x4
     # fail on arbitrary frame sizes.  Recommend fully-dynamic video models.
     if gpu_active and has_dml and vram >= 6000:
         model_id, scale, tier = "realesrgan-animevideo-x4", 4, "dml-gpu"
-        reason = "DirectML GPU with %d MB VRAM — Real-ESRGAN AnimeVideo x4 (dynamic shapes, ~10 FPS at 1080p)." % vram
+        reason = "DirectML GPU with %d MB VRAM â€” Real-ESRGAN AnimeVideo x4 (dynamic shapes, ~10 FPS at 1080p)." % vram
         alts = ["span-x4", "span-x2", "anime-compact-x4"]
     elif gpu_active and has_dml:
         model_id, scale, tier = "span-x2", 2, "dml-gpu-low"
-        reason = "DirectML GPU with limited VRAM (%d MB) — SPAN x2 is lightweight and fast." % vram
+        reason = "DirectML GPU with limited VRAM (%d MB) â€” SPAN x2 is lightweight and fast." % vram
         alts = ["realesrgan-animevideo-x4", "anime-compact-x4"]
     elif gpu_active and (has_cuda or has_rocm) and vram >= 6000:
         model_id, scale, tier = "realesrgan-x4", 4, "strong-gpu"
-        reason = "Dedicated GPU with %d MB VRAM — best quality (Real-ESRGAN x4)." % vram
+        reason = "Dedicated GPU with %d MB VRAM â€” best quality (Real-ESRGAN x4)." % vram
         alts = ["realesrgan-animevideo-x4", "realesrgan-x4-256", "fsrcnn-x2"]
     elif gpu_active and (has_cuda or has_rocm):
         model_id, scale, tier = "realesrgan-x4-256", 4, "mid-gpu"
-        reason = "GPU with limited VRAM (%d MB) — 256px-tiled Real-ESRGAN keeps memory in check." % vram
+        reason = "GPU with limited VRAM (%d MB) â€” 256px-tiled Real-ESRGAN keeps memory in check." % vram
         alts = ["realesrgan-animevideo-x4", "realesrgan-x4", "fsrcnn-x2"]
     elif gpu_active and has_ov:
         model_id, scale, tier = "realesrgan-x4-256", 4, "igpu"
-        reason = "Intel iGPU via OpenVINO — tiled Real-ESRGAN; switch to fsrcnn-x2 if it's too slow."
+        reason = "Intel iGPU via OpenVINO â€” tiled Real-ESRGAN; switch to fsrcnn-x2 if it's too slow."
         alts = ["fsrcnn-x2", "fsrcnn-x3"]
     elif cores >= 8:
         model_id, scale, tier = "fsrcnn-x2", 2, "strong-cpu"
-        reason = "CPU only (%d cores) — a lightweight model at 2x; heavy ONNX models will saturate the host." % cores
+        reason = "CPU only (%d cores) â€” a lightweight model at 2x; heavy ONNX models will saturate the host." % cores
         alts = ["fsrcnn-x3", "realesrgan-x4-256"]
     else:
         model_id, scale, tier = "fsrcnn-x2", 2, "weak-cpu"
-        reason = ("Weak CPU (%d cores, e.g. Celeron) — lightest model at 2x. For live playback prefer "
+        reason = ("Weak CPU (%d cores, e.g. Celeron) â€” lightest model at 2x. For live playback prefer "
                   "Anime4K on the client GPU instead of server-side upscaling.") % cores
         alts = ["fsrcnn-x3"]
 
@@ -4333,7 +4333,7 @@ async def list_gpus():
 
 @app.get("/gpu-verify")
 async def gpu_verify():
-    """Run GPU diagnostics — clinfo, nvidia-smi, ONNX providers."""
+    """Run GPU diagnostics â€” clinfo, nvidia-smi, ONNX providers."""
     diagnostics = {
         "onnx_providers": ort.get_available_providers() if ONNX_AVAILABLE else [],
         "active_providers": state.providers,
@@ -4387,7 +4387,7 @@ async def gpu_verify():
     # SKIP_TENSORRT setting
     diagnostics["skip_tensorrt"] = _skip_tensorrt()
 
-    # ONNX inference test — build test tensor from actual model input shape
+    # ONNX inference test â€” build test tensor from actual model input shape
     if ONNX_AVAILABLE and state.onnx_session is not None:
         try:
             model_input = state.onnx_session.get_inputs()[0]
@@ -4423,7 +4423,7 @@ async def gpu_verify():
 # One-shot self-service diagnostic that condenses the recent setup-friction
 # saga (#66 WSL2 / #69 wrong image / #70 "switches to CPU") into a single curl.
 # Every check is strictly read-only EXCEPT model_smoke (one tiny inference),
-# which is timeout-guarded and degrades to warn — never fail — on a no-model box.
+# which is timeout-guarded and degrades to warn â€” never fail â€” on a no-model box.
 
 def _detect_backend() -> str:
     """Best-effort backend label. There is no single stored backend value, so
@@ -4441,7 +4441,7 @@ def _detect_backend() -> str:
         return "apple"
     if any("Dml" in p for p in providers):
         return "directml"
-    # No GPU provider active yet → derive from device hints / requested intent.
+    # No GPU provider active yet â†’ derive from device hints / requested intent.
     if Path("/dev/dxg").exists():
         return "intel-wsl2"
     return "cpu"
@@ -4468,7 +4468,7 @@ def _model_smoke_sync() -> dict:
 
 @app.get("/doctor")
 async def doctor():
-    """Setup Doctor — one-shot diagnostic checklist for the running instance.
+    """Setup Doctor â€” one-shot diagnostic checklist for the running instance.
     Each item: {check, status: ok|warn|fail, detail, fix}. Pairs with the
     website support bot: the bot answers questions, the doctor diagnoses THIS box."""
     checks = []
@@ -4506,16 +4506,16 @@ async def doctor():
         "directml": "DirectML needs a Windows host with a DX12-capable GPU.",
     }
 
-    # 1) backend — info only.
+    # 1) backend â€” info only.
     checks.append({
         "check": "backend",
         "status": "ok",
         "detail": f"detected backend: {backend}"
-                  + ("" if providers else " (no model loaded yet — derived from device/intent)"),
+                  + ("" if providers else " (no model loaded yet â€” derived from device/intent)"),
         "fix": None,
     })
 
-    # 2) gpu_provider_active — a non-CPU provider is actually live.
+    # 2) gpu_provider_active â€” a non-CPU provider is actually live.
     if gpu_active:
         checks.append({"check": "gpu_provider_active", "status": "ok",
                        "detail": f"active providers: {providers}", "fix": None})
@@ -4543,10 +4543,10 @@ async def doctor():
                        "fix": f"Pull `docker7-{backend}` and pass the device "
                               f"(see device_passthrough)."})
 
-    # 3) device_passthrough — the GPU device reaches the container.
+    # 3) device_passthrough â€” the GPU device reaches the container.
     if backend == "cpu":
         checks.append({"check": "device_passthrough", "status": "ok",
-                       "detail": "CPU image — no GPU device required. " + pt_detail,
+                       "detail": "CPU image â€” no GPU device required. " + pt_detail,
                        "fix": None})
     elif passthrough_ok:
         checks.append({"check": "device_passthrough", "status": "ok",
@@ -4556,7 +4556,7 @@ async def doctor():
                        "detail": pt_detail,
                        "fix": device_fix.get(backend, "Pass your GPU device into the container.")})
 
-    # 4) onnx_provider_pkg — the right onnxruntime build (no vendor shadowing).
+    # 4) onnx_provider_pkg â€” the right onnxruntime build (no vendor shadowing).
     avail = set(ort.get_available_providers()) if ONNX_AVAILABLE else set()
     gpu_eps = avail & set(_NON_CPU_PROVIDERS)
     if not ONNX_AVAILABLE:
@@ -4570,17 +4570,17 @@ async def doctor():
         checks.append({"check": "onnx_provider_pkg", "status": "fail",
                        "detail": f"GPU requested but only {sorted(avail)} available",
                        "fix": "Wrong/shadowed onnxruntime: a plain `onnxruntime` installed "
-                              "next to the vendor build shadows it (Azure/CPU only) → silent "
+                              "next to the vendor build shadows it (Azure/CPU only) â†’ silent "
                               "CPU fallback. Pull the clean `docker7-<backend>` image."})
     else:
         checks.append({"check": "onnx_provider_pkg", "status": "ok",
                        "detail": f"available EPs: {sorted(avail)}", "fix": None})
 
-    # 5) api_token — auth is configured (a token, or explicit disable).
+    # 5) api_token â€” auth is configured (a token, or explicit disable).
     api_token_env = os.getenv("API_TOKEN", "")
     if api_token_env == "disable":
         checks.append({"check": "api_token", "status": "ok",
-                       "detail": "API_TOKEN=disable (auth off — fine for trusted LAN)", "fix": None})
+                       "detail": "API_TOKEN=disable (auth off â€” fine for trusted LAN)", "fix": None})
     elif api_token_env:
         checks.append({"check": "api_token", "status": "ok",
                        "detail": "API_TOKEN set (auth on)", "fix": None})
@@ -4590,12 +4590,12 @@ async def doctor():
                        "fix": "Set `API_TOKEN=disable` for a trusted LAN, or the SAME token "
                               "on both the Jellyfin plugin and this service."})
 
-    # 6) model_smoke — the one non-read-only check. Warn (never fail) with no model;
+    # 6) model_smoke â€” the one non-read-only check. Warn (never fail) with no model;
     #    timeout-guarded so /doctor never blocks.
     smoke_timeout = 8.0
     if not state.current_model:
         checks.append({"check": "model_smoke", "status": "warn",
-                       "detail": "no model loaded yet — load a model to run a smoke test",
+                       "detail": "no model loaded yet â€” load a model to run a smoke test",
                        "fix": "Load a model (POST /models/load or pick one in the UI), then re-run /doctor."})
     else:
         try:
@@ -4618,7 +4618,7 @@ async def doctor():
         except Exception as e:
             checks.append({"check": "model_smoke", "status": "fail",
                            "detail": f"inference failed: {e}",
-                           "fix": "Model load/warmup failed — check server logs and the model file."})
+                           "fix": "Model load/warmup failed â€” check server logs and the model file."})
 
     statuses = [c["status"] for c in checks]
     overall = "fail" if "fail" in statuses else ("warn" if "warn" in statuses else "ok")
@@ -4660,7 +4660,7 @@ async def register_connection(
             if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
                 raise HTTPException(status_code=400, detail="Private/loopback URLs are not allowed.")
         except ValueError:
-            # hostname is a DNS name — resolve it and check each IP against private ranges
+            # hostname is a DNS name â€” resolve it and check each IP against private ranges
             try:
                 addrinfos = socket.getaddrinfo(hostname, None)
                 for family, _type, _proto, _canonname, sockaddr in addrinfos:
@@ -4797,7 +4797,7 @@ async def _run_download_job(job_id: str, model_name: str):
 
 @app.post("/models/download-async")
 async def download_model_async_endpoint(model_name: str = Form(...), request: Request = None):
-    """v1.8.2 — start a model download in the background and return a job id immediately.
+    """v1.8.2 â€” start a model download in the background and return a job id immediately.
     Decouples big downloads from the HTTP request lifetime (no more client timeouts).
     Poll /models/download-status/{job_id} for progress."""
     _require_api_token(request)
@@ -4862,7 +4862,7 @@ async def load_model_endpoint(
     # Auto-download model if not present (ncnn models are bundled, skip path check)
     model_type = model_info.get("type", "pb")
     if model_type != "ncnn" and not model_path.exists():
-        logger.info(f"Model {model_name} not downloaded — auto-downloading...")
+        logger.info(f"Model {model_name} not downloaded â€” auto-downloading...")
         dl_success = await download_model(model_name)
         if not dl_success:
             raise HTTPException(status_code=500, detail=f"Failed to auto-download model {model_name}")
@@ -4925,10 +4925,10 @@ async def upscale_endpoint(
     acquired = False
     # Python 3.12 broke asyncio.wait_for(coro, timeout=0): the coroutine is
     # wrapped in a Task, cancellation is scheduled immediately, and the Task
-    # never gets to run before being cancelled — causing permanent 429.
+    # never gets to run before being cancelled â€” causing permanent 429.
     # Fix: check _value directly (safe in asyncio; no await between check and
     # acquire, so no other coroutine can interleave).
-    if sem is None or sem._value <= 0:
+    if sem is None or sem.locked():
         raise HTTPException(status_code=429, detail="Too many concurrent requests", headers={"Retry-After": "1"})
     await sem.acquire()
     acquired = True
@@ -5006,7 +5006,7 @@ async def upscale_frame_hdr(
     sem = _upscale_semaphore
     acquired = False
     # See /upscale for explanation of why we avoid asyncio.wait_for(timeout=0)
-    if sem is None or sem._value <= 0:
+    if sem is None or sem.locked():
         raise HTTPException(status_code=429, detail="Too many concurrent requests", headers={"Retry-After": "1"})
     await sem.acquire()
     acquired = True
@@ -5083,7 +5083,7 @@ async def upscale_frame_endpoint(request: Request):
     sem = _upscale_semaphore
     acquired = False
     # See /upscale for explanation of why we avoid asyncio.wait_for(timeout=0)
-    if sem is None or sem._value <= 0:
+    if sem is None or sem.locked():
         raise HTTPException(status_code=503, detail="Busy", headers={"Retry-After": "1"})
     await sem.acquire()
     acquired = True
@@ -5157,7 +5157,7 @@ async def upscale_video_chunk(request: Request):
     sem = _upscale_semaphore
     acquired = False
     # See /upscale for explanation of why we avoid asyncio.wait_for(timeout=0)
-    if sem is None or sem._value <= 0:
+    if sem is None or sem.locked():
         raise HTTPException(status_code=503, detail="Busy", headers={"Retry-After": "1"})
     await sem.acquire()
     acquired = True
@@ -5267,11 +5267,11 @@ def _run_frame_benchmark(width: int, height: int) -> dict:
         logger.error(f"Benchmark warmup failed: {e}")
         return {"error": "Warmup failed. Check server logs for details."}
 
-    # Benchmark 5 iterations (JPEG decode → upscale → JPEG encode)
+    # Benchmark 5 iterations (JPEG decode â†’ upscale â†’ JPEG encode)
     times = []
     iterations = 5
     for _ in range(iterations):
-        # Simulate full pipeline: JPEG encode → decode → upscale → JPEG encode
+        # Simulate full pipeline: JPEG encode â†’ decode â†’ upscale â†’ JPEG encode
         _, jpeg_buf = cv2.imencode('.jpg', test_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
         jpeg_bytes = jpeg_buf.tobytes()
 
@@ -5344,7 +5344,7 @@ async def upscale_stream(request: Request):
 
     # Acquire concurrency semaphore AFTER validation (prevents leak on bad headers)
     sem = _upscale_semaphore
-    if sem is None or sem._value <= 0:
+    if sem is None or sem.locked():
         raise HTTPException(status_code=429, detail="Too many concurrent requests", headers={"Retry-After": "1"})
     await sem.acquire()
     with _processing_count_lock:
@@ -5414,7 +5414,7 @@ async def upscale_stream(request: Request):
 
                     # Adaptive frame dropping: if processing is too slow, skip buffered frames
                     if duration > min_frame_interval * 2 and len(buffer) >= frame_size:
-                        # Drop one frame to catch up — yield last good frame to keep consumer aligned
+                        # Drop one frame to catch up â€” yield last good frame to keep consumer aligned
                         del buffer[:frame_size]
                         _realtime_stats.record_drop()
                         yield upscaled.tobytes()  # Duplicate last frame to maintain alignment
@@ -5492,7 +5492,7 @@ async def update_config(
             raise HTTPException(status_code=400, detail="max_concurrent must be 1-256")
         state.max_concurrent = max_concurrent
         global _upscale_semaphore
-        # Replace semaphore — new requests will use the new limit.
+        # Replace semaphore â€” new requests will use the new limit.
         # In-flight requests still hold the old semaphore reference from their
         # local 'acquired' variable, so they'll release correctly on completion.
         _upscale_semaphore = asyncio.Semaphore(max_concurrent)
@@ -5514,7 +5514,7 @@ async def update_config(
 # === Managed API tokens (CRUD) ===
 # Admin-managed, hashed, persistent tokens (see token_store). Every endpoint
 # requires an already-valid credential (env bootstrap token OR an existing
-# managed token) via _require_api_token — you must be authenticated to manage
+# managed token) via _require_api_token â€” you must be authenticated to manage
 # tokens. The env API_TOKEN therefore bootstraps the very first token.
 # ============================================================
 @app.get("/auth/tokens")
@@ -5537,7 +5537,7 @@ async def create_api_token(
 ):
     """Create a managed token. Omit expires_days (or 0/null) for a token that
     never expires; otherwise 1..3650 days. Returns the plaintext token EXACTLY
-    ONCE — it is hashed at rest and can never be retrieved again."""
+    ONCE â€” it is hashed at rest and can never be retrieved again."""
     _require_api_token(request)
     try:
         token, info = token_store.create_token((name or "").strip(), expires_days)
@@ -5621,7 +5621,7 @@ async def prometheus_metrics():
 
 def _record_success(model_name: str, duration_ms: float):
     """Record a successful job for metrics and health tracking.
-    Note: total_frames_processed is NOT incremented here — each endpoint
+    Note: total_frames_processed is NOT incremented here â€” each endpoint
     controls its own frame count (1 for single-frame, N for multi-frame)."""
     with _circuit_lock:
         state.total_jobs += 1
@@ -5677,17 +5677,17 @@ def _check_circuit_breaker(request: Request):
         if not state.circuit_open and state.circuit_half_open:
             exc = HTTPException(
                 status_code=503,
-                detail="Circuit breaker half-open — probe in progress, retry shortly",
+                detail="Circuit breaker half-open â€” probe in progress, retry shortly",
                 headers={"Retry-After": "1"},
             )
         elif state.circuit_open:
             elapsed = time.time() - state.circuit_open_at
             if elapsed >= state.circuit_breaker_reset_seconds:
                 if state.circuit_half_open:
-                    # Another request is already probing — block this one
+                    # Another request is already probing â€” block this one
                     exc = HTTPException(
                         status_code=503,
-                        detail="Circuit breaker half-open — probe in progress, retry shortly",
+                        detail="Circuit breaker half-open â€” probe in progress, retry shortly",
                         headers={"Retry-After": "1"},
                     )
                 else:
@@ -5701,7 +5701,7 @@ def _check_circuit_breaker(request: Request):
                 retry_seconds = max(1, math.ceil(state.circuit_breaker_reset_seconds - elapsed))
                 exc = HTTPException(
                     status_code=503,
-                    detail=f"Circuit breaker open — {state.consecutive_failures} consecutive failures. "
+                    detail=f"Circuit breaker open â€” {state.consecutive_failures} consecutive failures. "
                            f"Retry in {retry_seconds}s",
                     headers={"Retry-After": str(retry_seconds)},
                 )
@@ -5731,7 +5731,7 @@ async def health_detailed():
     gpu_healthy = None  # None = not applicable (GPU disabled)
     gpu_error = None
 
-    # Quick GPU check — covers ONNX, ncnn, and OpenVINO backends
+    # Quick GPU check â€” covers ONNX, ncnn, and OpenVINO backends
     if not state.use_gpu:
         gpu_healthy = None
         gpu_error = "GPU disabled (CPU mode)"
@@ -5754,7 +5754,7 @@ async def health_detailed():
                 gpu_healthy = False
                 gpu_error = str(e)
         elif state.cv_model is not None:
-            # OpenCV DNN — GPU status is best-effort (no provider list)
+            # OpenCV DNN â€” GPU status is best-effort (no provider list)
             gpu_healthy = True
         else:
             gpu_healthy = False
@@ -5907,7 +5907,7 @@ async def interpolate_frames(request: Request):
     _check_circuit_breaker(request)
 
     if not ONNX_AVAILABLE:
-        raise HTTPException(status_code=500, detail="ONNX Runtime not available — frame interpolation requires ONNX")
+        raise HTTPException(status_code=500, detail="ONNX Runtime not available â€” frame interpolation requires ONNX")
 
     # Parse multipart form
     form = await request.form()
@@ -5931,9 +5931,9 @@ async def interpolate_frames(request: Request):
     if AVAILABLE_MODELS[model_name].get("category") != "interpolation":
         raise HTTPException(status_code=400, detail=f"Model {model_name} is not an interpolation model")
 
-    # v1.8.2 — experimental/self-host interpolation archs (IFRNet/CAIN) have no verified
+    # v1.8.2 â€” experimental/self-host interpolation archs (IFRNet/CAIN) have no verified
     # public ONNX to auto-download. If the user hasn't placed one in the models dir, return a
-    # clear 501 instead of a confusing 404 download failure. They run fine once self-hosted —
+    # clear 501 instead of a confusing 404 download failure. They run fine once self-hosted â€”
     # the interpolation engine is architecture-adaptive (RIFE / IFRNet / CAIN).
     if AVAILABLE_MODELS[model_name].get("self_host") and not get_model_path(model_name).exists():
         raise HTTPException(
@@ -5976,7 +5976,7 @@ async def interpolate_frames(request: Request):
         # Auto-download if not present
         model_path = get_model_path(model_name)
         if not model_path.exists():
-            logger.info(f"RIFE model {model_name} not downloaded — auto-downloading...")
+            logger.info(f"RIFE model {model_name} not downloaded â€” auto-downloading...")
             dl_success = await download_model(model_name)
             if not dl_success:
                 raise HTTPException(status_code=500, detail=f"Failed to auto-download RIFE model {model_name}")
@@ -6059,9 +6059,9 @@ async def interpolation_status():
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Feature: Face Restoration (v1.6.1.7 — GFPGAN / CodeFormer)
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# Feature: Face Restoration (v1.6.1.7 â€” GFPGAN / CodeFormer)
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @app.post("/face-restore/load")
 async def face_restore_load_endpoint(model_name: str = Form("gfpgan-v1.4"), request: Request = None):
@@ -6073,7 +6073,7 @@ async def face_restore_load_endpoint(model_name: str = Form("gfpgan-v1.4"), requ
         return result
     except FileNotFoundError as e:
         # Auto-download on first load, same pattern as RIFE
-        logger.info(f"Face-restore model {model_name} not downloaded — auto-downloading...")
+        logger.info(f"Face-restore model {model_name} not downloaded â€” auto-downloading...")
         dl_success = await download_model(model_name)
         if not dl_success:
             raise HTTPException(status_code=404, detail=str(e))
@@ -6342,9 +6342,9 @@ async def face_restore_frame_endpoint(request: Request):
     return Response(content=buffer.tobytes(), media_type="image/jpeg", headers=headers)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Feature: Quality Metrics (PSNR / SSIM)
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def compute_quality_metrics(original: np.ndarray, upscaled: np.ndarray) -> dict:
     """Compute PSNR and SSIM between original (resized to match) and upscaled image.
@@ -6372,7 +6372,7 @@ def compute_quality_metrics(original: np.ndarray, upscaled: np.ndarray) -> dict:
     else:
         psnr = 10.0 * np.log10((255.0 ** 2) / mse)
 
-    # SSIM (simplified implementation — matches scikit-image for 8-bit grayscale)
+    # SSIM (simplified implementation â€” matches scikit-image for 8-bit grayscale)
     C1 = (0.01 * 255) ** 2
     C2 = (0.03 * 255) ** 2
 
@@ -6428,9 +6428,9 @@ async def quality_metrics_endpoint(
     return JSONResponse(metrics)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Feature: Film Grain Management
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def remove_grain(img: np.ndarray, strength: int = 5) -> np.ndarray:
     """Remove film grain / noise using non-local means denoising.
@@ -6496,7 +6496,7 @@ async def process_grain_endpoint(
     elif action == "add":
         result = add_grain(img, intensity)
     elif action == "both":
-        # Remove grain → upscale → re-add grain
+        # Remove grain â†’ upscale â†’ re-add grain
         denoised = remove_grain(img, strength)
         try:
             upscaled = upscale_image_array(denoised)
@@ -6510,9 +6510,9 @@ async def process_grain_endpoint(
     return Response(content=encoded.tobytes(), media_type="image/png")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Feature: Face Enhancement (GFPGAN-style via ONNX)
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 # Face detection + enhancement state
 _face_cascade = None
@@ -6744,9 +6744,9 @@ async def upload_face_enhance_model(request: Request, file: UploadFile = File(..
     return {"status": "ok", "message": "Face enhancement model loaded"}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Feature: Custom ONNX Model Upload + OpenModelDB import/convert (v1.8.3.8)
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _classify_onnx_model(session) -> dict:
     """Decide what kind of model this is, or refuse it.
@@ -6805,7 +6805,7 @@ def _ingest_onnx_bytes(data: bytes, model_name: str, scale: int, description: st
     """Validate, persist and register ONNX model bytes.
 
     Shared core of /models/upload, /models/import-from-catalog and the pth
-    converter — one gate set, one sidecar format, one registry shape.
+    converter â€” one gate set, one sidecar format, one registry shape.
     Raises HTTPException on any validation failure.
     """
     if not re.match(r"^[a-zA-Z0-9_-]{1,64}$", model_name):
@@ -6853,7 +6853,7 @@ def _ingest_onnx_bytes(data: bytes, model_name: str, scale: int, description: st
         raise HTTPException(status_code=500, detail="Failed to save model file")
 
     # Persist a metadata sidecar so the registration survives restarts
-    # (v1.8.3.7 — the file used to survive in the volume while the registry
+    # (v1.8.3.7 â€” the file used to survive in the volume while the registry
     # entry silently vanished on every container restart).
     sidecar_path = model_dir / f"{model_name}.custom.json"
     try:
@@ -6872,7 +6872,7 @@ def _ingest_onnx_bytes(data: bytes, model_name: str, scale: int, description: st
                 "detector": kind["detector"],
             }, fh)
     except OSError:
-        logger.warning(f"Could not write custom-model sidecar for {model_name} — model will not survive a restart", exc_info=True)
+        logger.warning(f"Could not write custom-model sidecar for {model_name} â€” model will not survive a restart", exc_info=True)
 
     # Register in AVAILABLE_MODELS (restored from the sidecar on restart)
     with _model_lock:
@@ -6906,7 +6906,7 @@ def _ingest_onnx_bytes(data: bytes, model_name: str, scale: int, description: st
     }
 
 
-# ── OpenModelDB import catalog (v1.8.3.8) ────────────────────────
+# â”€â”€ OpenModelDB import catalog (v1.8.3.8) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Moved to app/model_import.py in v1.8.3.20 (Phase 2) - a verbatim extraction, no
 # behaviour change. The endpoints below keep their decorators here, so no route
 # moved; only the helpers they call now live in their own module.
@@ -7032,7 +7032,7 @@ async def convert_model_from_catalog(request: Request, body: dict = Body(...)):
             "non_commercial": "NC" in (entry.get("license") or "").upper()}
 
 
-# ── Async import/convert jobs (v1.8.3.11) ───────────────────────────────────
+# â”€â”€ Async import/convert jobs (v1.8.3.11) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Big community models (60+ MB pth on a CPU box) can exceed the plugin's proxy
 # timeout chain on the synchronous endpoints. Same job pattern as
 # /models/download-async: start, get a job id, poll. Honest PHASE reporting
@@ -7227,7 +7227,7 @@ async def delete_custom_model(request: Request, model_name: str):
             os.unlink(str(sidecar))
 
         # Unregister and unload if active.
-        # _model_lock is already held here — acquiring _models_registry_lock
+        # _model_lock is already held here â€” acquiring _models_registry_lock
         # inside it would create a nested-lock (ABBA deadlock) risk if any other
         # code path takes them in the opposite order.  Since _model_lock already
         # serialises all model state mutations, the dict pop is safe without the
@@ -7243,9 +7243,9 @@ async def delete_custom_model(request: Request, model_name: str):
     return {"status": "ok", "deleted": model_name}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Feature: Config endpoint for feature toggles
-# ══════════════════════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @app.get("/features", tags=["Configuration"])
 async def get_feature_status():
@@ -7289,4 +7289,5 @@ async def get_feature_status():
     }
 
 
-# service_start_time is set in lifespan() — no deprecated on_event("startup") needed
+# service_start_time is set in lifespan() â€” no deprecated on_event("startup") needed
+

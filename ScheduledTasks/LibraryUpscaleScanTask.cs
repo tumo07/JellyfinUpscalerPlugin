@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -18,7 +18,7 @@ namespace JellyfinUpscalerPlugin.ScheduledTasks
     /// <summary>
     /// Scheduled task that scans the library for low-resolution media
     /// and processes them through the AI upscaling pipeline.
-    /// Appears in Jellyfin Dashboard → Scheduled Tasks → AI Upscaler category.
+    /// Appears in Jellyfin Dashboard â†’ Scheduled Tasks â†’ AI Upscaler category.
     /// </summary>
     public class LibraryUpscaleScanTask : IScheduledTask
     {
@@ -118,7 +118,7 @@ namespace JellyfinUpscalerPlugin.ScheduledTasks
                     }
                 }
                 _logger.LogInformation(
-                    "AI Upscaler: Library filter active — {Count} selected, {Paths} resolved paths",
+                    "AI Upscaler: Library filter active â€” {Count} selected, {Paths} resolved paths",
                     enabledLibraryIds.Count, enabledLibraryPaths.Count);
             }
 
@@ -177,7 +177,7 @@ namespace JellyfinUpscalerPlugin.ScheduledTasks
                 }
 
                 // v1.6.1.21 - RestrictToUnwatchedContent toggle (P0b). Default: false. When true,
-                // skip items any user has already played — avoids compute-waste on shared family
+                // skip items any user has already played â€” avoids compute-waste on shared family
                 // libraries where some movies are already seen. Counted under alreadyUpscaledCount
                 // for telemetry simplicity (treat "watched" as "no point re-processing").
                 if (config.RestrictToUnwatchedContent && _userManagerAdapter.IsAnyUserPlayed(video))
@@ -234,7 +234,7 @@ namespace JellyfinUpscalerPlugin.ScheduledTasks
                 if (detectedWidth == null || detectedHeight == null)
                 {
                     noResolutionCount++;
-                    _logger.LogDebug("AI Upscaler: Skipping {Name} — no resolution info available", video.Name);
+                    _logger.LogDebug("AI Upscaler: Skipping {Name} â€” no resolution info available", video.Name);
                     continue;
                 }
 
@@ -437,3 +437,5 @@ namespace JellyfinUpscalerPlugin.ScheduledTasks
         }
     }
 }
+
+

@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -7,8 +7,8 @@
     <TreatWarningsAsErrors Condition="'$(Configuration)'=='Release'">true</TreatWarningsAsErrors>
     <TreatWarningsAsErrors Condition="'$(Configuration)'!='Release'">false</TreatWarningsAsErrors>
     <AssemblyTitle>AI Upscaler Plugin</AssemblyTitle>
-    <Version>1.8.3.35</Version>
-    <AssemblyVersion>1.8.3.35</AssemblyVersion>
+    <Version>1.8.3.36</Version>
+    <AssemblyVersion>1.8.3.36</AssemblyVersion>
     <FileVersion>1.8.3.35</FileVersion>
     <NoWarn>CS8632</NoWarn>
     <Nullable>enable</Nullable>
@@ -22,7 +22,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Jellyfin.Controller" Version="12.0.0" PrivateAssets="all" />
+    <PackageReference Include="Jellyfin.Controller" Version="12.1.0" PrivateAssets="all" />
     <!-- Microsoft.Extensions and System.Text.Json provided transitively by Jellyfin.Controller -->
     
     <!-- FFmpeg Integration (for frame extraction/encoding only) -->
@@ -50,9 +50,7 @@
          logged "Failed to get resource ...strings.en.json" on every config-page load and
          every translated string fell back to its key. Found by reading a live server's log;
          the test guarding this asserted the csproj MENTIONED the file, which it always did. -->
-    <EmbeddedResource Include="Configuration\strings.en.json"
-                      WithCulture="false"
-                      LogicalName="JellyfinUpscalerPlugin.Configuration.strings.en.json" />
+    <EmbeddedResource Include="Configuration\strings.en.json" WithCulture="false" LogicalName="JellyfinUpscalerPlugin.Configuration.strings.en.json" />
     <!-- Auto-generated fallback model list, regenerate via Scripts/sync-fallback-models.ps1 -->
     <EmbeddedResource Include="Resources\models-fallback.json" />
     <EmbeddedResource Include="thumb.png" />
@@ -78,4 +76,8 @@
   </ItemGroup>
 
 </Project>
+
+
+
+
 
