@@ -248,11 +248,13 @@ class RealtimeStats:
 
     @property
     def frames_processed(self) -> int:
-        return len(self._durations)
+        with self._lock:
+            return len(self._durations)
 
     @property
     def total_time(self) -> float:
-        return sum(self._durations)
+        with self._lock:
+            return sum(self._durations)
 
     def record_frame(self, duration: float) -> None:
         """Record a processed frame and update rolling FPS via sliding window."""
@@ -1968,6 +1970,7 @@ async def lifespan(app: FastAPI):
     # Create directories
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     # Restore custom/imported models from their sidecar files (v1.8.3.7 â€”
     # previously they vanished from the catalog on every restart).
@@ -2328,9 +2331,9 @@ def upscale_with_ncnn(img: np.ndarray) -> np.ndarray:
         # Convert BGR (OpenCV) to PIL Image for the wrapper
         from PIL import Image as PILImage
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        pil_img = PILImage.fromarray(img_rgb)
-        result_pil = upscaler.process(pil_img)
-        result_rgb = np.array(result_pil)
+        with PILImage.fromarray(img_rgb) as pil_img:
+            with upscaler.process(pil_img) as result_pil:
+                result_rgb = np.array(result_pil)
         return cv2.cvtColor(result_rgb, cv2.COLOR_RGB2BGR)
     else:
         # Raw ncnn â€” manual tile-based inference with weighted blending
