@@ -293,9 +293,27 @@
             const gl = this.gl;
             const video = this.videoElement;
             
-            // Update canvas size (use explicit size if set, else video native)
-            var targetW = this._explicitWidth || (this.canvas.clientWidth * window.devicePixelRatio);
-            var targetH = this._explicitHeight || (this.canvas.clientHeight * window.devicePixelRatio);
+            // Update canvas size (use explicit size if set, else calculate correct aspect ratio)
+            var targetW, targetH;
+            if (this._explicitWidth && this._explicitHeight) {
+                targetW = this._explicitWidth;
+                targetH = this._explicitHeight;
+            } else {
+                var dpr = window.devicePixelRatio || 1;
+                var containerW = video.clientWidth * dpr;
+                var containerH = video.clientHeight * dpr;
+                var videoRatio = video.videoWidth / video.videoHeight;
+                var containerRatio = containerW / containerH;
+                if (videoRatio > containerRatio) {
+                    targetW = containerW;
+                    targetH = containerW / videoRatio;
+                } else {
+                    targetW = containerH * videoRatio;
+                    targetH = containerH;
+                }
+                targetW = Math.round(targetW);
+                targetH = Math.round(targetH);
+            }
             if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
                 this.canvas.width = targetW;
                 this.canvas.height = targetH;
