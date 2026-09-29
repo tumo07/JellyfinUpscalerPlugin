@@ -131,6 +131,7 @@
             models: [
                 { id: 'ncnn-realesrgan-x4', name: 'Real-ESRGAN x4 (Vulkan)', scale: 4 },
                 { id: 'ncnn-realesrgan-anime-x4', name: 'Real-ESRGAN Anime x4 (Vulkan)', scale: 4 },
+                { id: 'ncnn-realesrgan-anime-x2', name: 'Real-ESRGAN Anime x2 (Vulkan)', scale: 2 },
                 { id: 'ncnn-realsr-x4', name: 'RealSR x4 (Vulkan)', scale: 4 }
             ]
         }
@@ -3201,6 +3202,7 @@
         PlayerIntegration.init();
     }
 })();
+
 
 
 
