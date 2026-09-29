@@ -302,48 +302,30 @@
                 var dpr = window.devicePixelRatio || 1;
                 var containerW = video.clientWidth * dpr;
                 var containerH = video.clientHeight * dpr;
-                var fit = window.getComputedStyle(video).objectFit || 'contain';
                 var videoRatio = video.videoWidth / video.videoHeight;
-                var containerRatio = containerW / containerH;
-                if (fit === 'fill') {
-                    targetW = containerW;
+                
+                // Keep the internal WebGL buffer strictly locked to the video's aspect ratio
+                targetW = containerW;
+                targetH = containerW / videoRatio;
+                if (targetH > containerH) {
                     targetH = containerH;
-                } else if (fit === 'cover') {
-                    if (videoRatio > containerRatio) {
-                        targetH = containerH;
-                        targetW = containerH * videoRatio;
-                    } else {
-                        targetW = containerW;
-                        targetH = containerW / videoRatio;
-                    }
-                } else { // contain
-                    if (videoRatio > containerRatio) {
-                        targetW = containerW;
-                        targetH = containerW / videoRatio;
-                    } else {
-                        targetW = containerH * videoRatio;
-                        targetH = containerH;
-                    }
+                    targetW = containerH * videoRatio;
                 }
                 targetW = Math.round(targetW);
                 targetH = Math.round(targetH);
             }
-            var viewportX = 0, viewportY = 0;
-            if (this._explicitWidth && this._explicitHeight) {
-                if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
-                    this.canvas.width = targetW;
-                    this.canvas.height = targetH;
-                    gl.viewport(0, 0, targetW, targetH);
-                }
-            } else {
-                if (this.canvas.width !== containerW || this.canvas.height !== containerH) {
-                    this.canvas.width = containerW;
-                    this.canvas.height = containerH;
-                }
-                viewportX = Math.round((containerW - targetW) / 2);
-                viewportY = Math.round((containerH - targetH) / 2);
-                gl.viewport(viewportX, viewportY, targetW, targetH);
+            
+            if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
+                this.canvas.width = targetW;
+                this.canvas.height = targetH;
+                gl.viewport(0, 0, targetW, targetH);
+                
+                // Dynamically sync CSS object-fit with the video element
+                this.canvas.style.width = '100%';
+                this.canvas.style.height = '100%';
+                this.canvas.style.objectFit = window.getComputedStyle(video).objectFit || 'contain';
             }
+
             
             // Upload video frame to texture
             gl.bindTexture(gl.TEXTURE_2D, this.texture);
