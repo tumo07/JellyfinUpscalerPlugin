@@ -958,6 +958,17 @@ AVAILABLE_MODELS = {
         "ncnn_model": "realesrgan-x4plus-anime",
         "available": NCNN_AVAILABLE
     },
+    "ncnn-realesrgan-anime-x2": {
+        "name": "Real-ESRGAN Anime x2 (Vulkan GPU)",
+        "url": "",
+        "scale": 2,
+        "description": "Real-ESRGAN Anime x2 via ncnn-Vulkan. Faster inference for 720p/1080p content.",
+        "type": "ncnn",
+        "category": "vulkan",
+        "model_type": "realesrgan",
+        "ncnn_model": "realesrgan-x2plus-anime",
+        "available": NCNN_AVAILABLE
+    },
     "ncnn-realsr-x4": {
         "name": "RealSR x4 (Vulkan GPU)",
         "url": "",
