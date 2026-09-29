@@ -34,7 +34,7 @@
             }
         `,
         
-        // Lanczos2 resampling shader â€” real sub-pixel reconstruction
+        // Lanczos2 resampling shader — real sub-pixel reconstruction
         // Samples a 4x4 neighborhood from the source texture using a Lanczos kernel
         // with window size 2, then applies optional CAS (Contrast Adaptive Sharpening)
         fragmentShaderSource: `
@@ -42,7 +42,7 @@
 
             uniform sampler2D u_texture;
             uniform vec2 u_resolution;  // output (canvas) size
-            uniform float u_sharpness;  // 0.0 â€“ 1.0
+            uniform float u_sharpness;  // 0.0 – 1.0
             varying vec2 v_texCoord;
 
             #define PI 3.14159265359
