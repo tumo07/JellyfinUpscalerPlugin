@@ -1941,11 +1941,30 @@ def _register_custom_models_from_disk(models_dir, available_models) -> int:
     return restored
 
 
+import asyncio
+import subprocess
+import time
+
+async def poll_gpu_stats():
+    while True:
+        try:
+            cmd_load = ['powershell', '-NoProfile', '-Command', r"(Get-Counter '\GPU Engine(*engtype_3D*)\Utilization Percentage' -ErrorAction SilentlyContinue).CounterSamples | Measure-Object -Property CookedValue -Sum | Select -ExpandProperty Sum"]
+            load_str = subprocess.check_output(cmd_load, stderr=subprocess.DEVNULL).decode('utf-8').strip()
+            state.gpu_load = float(load_str) if load_str else 0.0
+
+            cmd_vram = ['powershell', '-NoProfile', '-Command', r"(Get-Counter '\GPU Adapter Memory(*)\Dedicated Usage' -ErrorAction SilentlyContinue).CounterSamples | Measure-Object -Property CookedValue -Sum | Select -ExpandProperty Sum"]
+            vram_str = subprocess.check_output(cmd_vram, stderr=subprocess.DEVNULL).decode('utf-8').strip()
+            state.gpu_vram = int(vram_str) if vram_str else 0
+        except Exception:
+            pass
+        await asyncio.sleep(2)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown."""
     logger.info(f"Starting AI Upscaler Service v{VERSION}...")
     
+    asyncio.create_task(poll_gpu_stats())
     # Create directories
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -4121,6 +4140,8 @@ async def status():
         "model_type": state.current_model_type,
         "available_providers": state.providers,
         "using_gpu": gpu_is_active(),
+        "gpu_load": state.gpu_load,
+        "gpu_vram": state.gpu_vram,
         "loaded_models": [state.current_model] if state.current_model else [],
         "processing_count": state.processing_count,
         "max_concurrent": state.max_concurrent,
@@ -7290,4 +7311,13 @@ async def get_feature_status():
 
 
 # service_start_time is set in lifespan() â€” no deprecated on_event("startup") needed
+
+
+
+
+
+
+
+
+
 

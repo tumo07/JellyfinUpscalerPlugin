@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -36,7 +36,7 @@ namespace JellyfinUpscalerPlugin.Controllers
     [Route("[controller]")]
     public class UpscalerController : ControllerBase
     {
-        // ── Constants ────────────────────────────────────────────────────
+        // â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         private const long MaxUploadSizeBytes = 50 * 1024 * 1024; // 50 MB
         private const int RateLimitMaxRequests = 10;
         private static readonly TimeSpan RateLimitWindow = TimeSpan.FromMinutes(1);
@@ -94,7 +94,7 @@ namespace JellyfinUpscalerPlugin.Controllers
         private HttpClient GetAiServiceClient() => _httpClientFactory.CreateClient("AiUpscaler");
 
         /// <summary>
-        /// v1.8.3.22 — is this path inside a Jellyfin media library?
+        /// v1.8.3.22 â€” is this path inside a Jellyfin media library?
         ///
         /// Every endpoint that takes a filesystem path from the request body needs this.
         /// They each had their own copy, and ProcessVideo had none at all: the whole class
@@ -125,7 +125,7 @@ namespace JellyfinUpscalerPlugin.Controllers
         ///
         /// It used to live inline, guarded only by a test asserting that the source contained
         /// the string "rootWithSep". Mutation testing showed that guard was hollow: putting the
-        /// bypass back — comparing against <c>root</c> instead of <c>rootWithSep</c> — left the
+        /// bypass back â€” comparing against <c>root</c> instead of <c>rootWithSep</c> â€” left the
         /// declaration, and therefore the asserted string, untouched, and the suite stayed
         /// green. A test that pins an identifier does not pin behaviour.
         ///
@@ -146,17 +146,17 @@ namespace JellyfinUpscalerPlugin.Controllers
         }
 
         /// <summary>
-        /// v1.8.3.22 — refuse to write over a file that already exists.
+        /// v1.8.3.22 â€” refuse to write over a file that already exists.
         ///
         /// The pipeline calls ffmpeg with -y, so naming an existing file as the output
         /// destroys it without a word. The output allowlist only constrains the DIRECTORY,
         /// which means "the other film in the same folder" was always a legal target.
         /// </summary>
         /// <summary>
-        /// v1.8.3.27 — extract the AI service's own error text from a failed proxy response.
+        /// v1.8.3.27 â€” extract the AI service's own error text from a failed proxy response.
         ///
         /// FastAPI answers {"detail": "..."}; the proxies used to drop it and substitute a
-        /// generic message, so "No model loaded" — which names the fix — reached the user as
+        /// generic message, so "No model loaded" â€” which names the fix â€” reached the user as
         /// "Frame upscaling failed". Returns null when there is nothing useful to add, so the
         /// caller's own message stands rather than being padded with noise.
         /// </summary>
@@ -282,7 +282,7 @@ namespace JellyfinUpscalerPlugin.Controllers
 
             // Fallback: load the embedded models-fallback.json resource (auto-generated from
             // docker-ai-service/app/main.py via Scripts/sync-fallback-models.ps1).
-            // v1.6.1.17 — replaces a hardcoded 12-model list that drifted from the registry by 24 models.
+            // v1.6.1.17 â€” replaces a hardcoded 12-model list that drifted from the registry by 24 models.
             return GetEmbeddedFallbackModels();
         }
 
@@ -326,7 +326,7 @@ namespace JellyfinUpscalerPlugin.Controllers
         /// <remarks>
         /// v1.6.1.21 (P1b) - the FaceRestore backend allowlist used to be hardcoded as
         /// <c>{ "gfpgan-v1.4", "codeformer" }</c>. v1.6.1.19 made the FRONTEND dropdown
-        /// auto-populated from the registry, but the backend kept its hardcoded list — meaning
+        /// auto-populated from the registry, but the backend kept its hardcoded list â€” meaning
         /// any future face-restore model (e.g. RestoreFormer++) added to AVAILABLE_MODELS
         /// would appear in the UI but get rejected with HTTP 400 from the backend. Asymmetric
         /// drift. This Lazy parses the same embedded JSON the frontend uses, so both sides
@@ -455,7 +455,7 @@ namespace JellyfinUpscalerPlugin.Controllers
             }
         }
 
-        // ── Managed API tokens ───────────────────────────────────────────
+        // â”€â”€ Managed API tokens â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         // Jellyfin-admin-only management of the AI service's hashed token list.
         // These transparently proxy /auth/tokens on the service; the shared
         // AiServiceAuthHandler attaches X-Api-Token (the configured token) so
@@ -512,7 +512,7 @@ namespace JellyfinUpscalerPlugin.Controllers
         }
 
         /// <summary>
-        /// Hardware-aware model recommendation — proxies the AI service's /recommend,
+        /// Hardware-aware model recommendation â€” proxies the AI service's /recommend,
         /// which picks a model + scale the detected hardware can actually run.
         /// </summary>
         [HttpGet("recommend")]
@@ -543,7 +543,7 @@ namespace JellyfinUpscalerPlugin.Controllers
         }
 
         /// <summary>
-        /// v1.8.3.6 — the direct-ONNX entries of the OpenModelDB import catalog
+        /// v1.8.3.6 â€” the direct-ONNX entries of the OpenModelDB import catalog
         /// (site/models-import.json), annotated with whether the PLUGIN can import
         /// them one-click (https + allowlisted host + plain .onnx + sha256 pin).
         /// </summary>
@@ -609,7 +609,7 @@ namespace JellyfinUpscalerPlugin.Controllers
         }
 
         /// <summary>
-        /// v1.8.3.6 — one-click community-model import. Admin-only. The flow:
+        /// v1.8.3.6 â€” one-click community-model import. Admin-only. The flow:
         /// resolve the catalog id (NO free-form URLs), download the pinned ONNX from
         /// an allowlisted host, verify its sha256 against the catalog pin, then hand
         /// it to the AI service's existing /models/upload (which shape-validates the
@@ -945,9 +945,9 @@ namespace JellyfinUpscalerPlugin.Controllers
         }
 
         /// <summary>
-        /// v1.8.2 — objective VMAF quality score (0–100) of an upscaled/distorted file
+        /// v1.8.2 â€” objective VMAF quality score (0â€“100) of an upscaled/distorted file
         /// against a reference, via ffmpeg+libvmaf. Returns 501 if this ffmpeg build
-        /// lacks libvmaf. Admin-only — it reads arbitrary server file paths.
+        /// lacks libvmaf. Admin-only â€” it reads arbitrary server file paths.
         /// </summary>
         [HttpPost("vmaf")]
         [Authorize(Policy = "RequiresElevation")]
@@ -1018,7 +1018,7 @@ namespace JellyfinUpscalerPlugin.Controllers
                     serviceAvailable = serviceAvailable,
                     message = serviceAvailable
                         ? "Hardware benchmark completed successfully"
-                        : "Docker AI Service is not reachable — benchmark skipped",
+                        : "Docker AI Service is not reachable â€” benchmark skipped",
                     results = new
                     {
                         duration = results.TotalDuration.TotalSeconds,
@@ -1088,7 +1088,7 @@ namespace JellyfinUpscalerPlugin.Controllers
         /// Benchmark-derived settings recommendations from the LOCAL hardware benchmark
         /// service. Distinct from <c>/recommend</c> (proxies the AI service's own
         /// hardware-aware model pick) and <c>/recommend-model</c> (content-based pick
-        /// for a specific video). All three are consumed by different UI surfaces —
+        /// for a specific video). All three are consumed by different UI surfaces â€”
         /// they look alike but are not aliases of each other.
         /// </summary>
         [HttpGet("hardware-benchmark")]
@@ -1143,7 +1143,7 @@ namespace JellyfinUpscalerPlugin.Controllers
         /// Get the recommended AI model for specific content parameters (genres,
         /// resolution). Used by the in-player panel when Auto-Mode is enabled.
         /// Distinct from <c>/recommend</c> (service hardware pick) and
-        /// <c>/recommendations</c> (local benchmark results) — see the note there.
+        /// <c>/recommendations</c> (local benchmark results) â€” see the note there.
         /// </summary>
         [HttpGet("recommend-model")]
         [Produces(MediaTypeNames.Application.Json)]
@@ -1243,7 +1243,7 @@ namespace JellyfinUpscalerPlugin.Controllers
                 // Prefer the substituted path from MediaSourceManager, fall back to item.Path
                 var videoPath = mediaSource?.Path ?? item.Path;
                 if (string.IsNullOrEmpty(videoPath))
-                    return BadRequest(new { message = "No video path — select a movie or episode, not a library folder" });
+                    return BadRequest(new { message = "No video path â€” select a movie or episode, not a library folder" });
 
                 _logger.LogInformation("Comparison: extracting frame from {Path}", videoPath);
 
@@ -1640,7 +1640,7 @@ namespace JellyfinUpscalerPlugin.Controllers
         // === Processing Queue API ===
         // ============================================================
 
-        /// <summary>Get queue status — pending, active, completed jobs.</summary>
+        /// <summary>Get queue status â€” pending, active, completed jobs.</summary>
         [HttpGet("queue")]
         [Produces(MediaTypeNames.Application.Json)]
         public ActionResult<object> GetQueueStatus()
@@ -1664,7 +1664,7 @@ namespace JellyfinUpscalerPlugin.Controllers
             if (model != null && model != "auto" && !ValidModelNameRegex.IsMatch(model))
                 return BadRequest(new { success = false, error = "Invalid model name" });
 
-            // Path traversal protection — normalize and validate against library paths (allowlist)
+            // Path traversal protection â€” normalize and validate against library paths (allowlist)
             inputPath = Path.GetFullPath(inputPath);
             if (!System.IO.File.Exists(inputPath))
                 return BadRequest(new { success = false, error = "Input file does not exist" });
@@ -1869,7 +1869,7 @@ namespace JellyfinUpscalerPlugin.Controllers
                 if (string.IsNullOrEmpty(request.InputPath))
                     return BadRequest(new { success = false, error = "InputPath required" });
 
-                // Path traversal protection — allowlist (must be in a Jellyfin library)
+                // Path traversal protection â€” allowlist (must be in a Jellyfin library)
                 var normalizedPath = Path.GetFullPath(request.InputPath);
                 // v1.8.3.22 - shared helper (separator-safe prefix; see IsInsideMediaLibrary).
                 if (!IsInsideMediaLibrary(normalizedPath))
@@ -2007,7 +2007,7 @@ namespace JellyfinUpscalerPlugin.Controllers
                     return BadRequest(new { success = false, error = "Missing 'settings' property" });
                 }
 
-                // Apply each setting if present — wrap typed getters to handle type mismatches gracefully
+                // Apply each setting if present â€” wrap typed getters to handle type mismatches gracefully
                 var skipped = new System.Collections.Generic.List<string>();
                 void TryApply(string key, Action<System.Text.Json.JsonElement> apply)
                 {
@@ -2017,7 +2017,7 @@ namespace JellyfinUpscalerPlugin.Controllers
                         catch (InvalidOperationException)
                         {
                             skipped.Add(key);
-                            _logger.LogWarning("Settings import: skipping '{Key}' — wrong JSON type", key);
+                            _logger.LogWarning("Settings import: skipping '{Key}' â€” wrong JSON type", key);
                         }
                     }
                 }
@@ -2224,6 +2224,8 @@ namespace JellyfinUpscalerPlugin.Controllers
                     latencyMs = stopwatch.ElapsedMilliseconds,
                     currentModel = status?.CurrentModel,
                     usingGpu = status?.UsingGpu ?? false,
+                    gpuLoad = status?.GpuLoad,
+                    gpuVram = status?.GpuVram,
                     processingCount = status?.ProcessingCount ?? 0,
                     maxConcurrent = status?.MaxConcurrent ?? 0,
                     providers = status?.AvailableProviders ?? Array.Empty<string>()
@@ -2311,14 +2313,14 @@ namespace JellyfinUpscalerPlugin.Controllers
                 if (string.IsNullOrEmpty(modelId))
                     return BadRequest(new { error = "model_name is required" });
                 if (!ValidModelNameRegex.IsMatch(modelId))
-                    return BadRequest(new { error = "Invalid model name — only alphanumeric, hyphens, and underscores allowed" });
+                    return BadRequest(new { error = "Invalid model name â€” only alphanumeric, hyphens, and underscores allowed" });
                 if (!Services.ModelAvailability.IsUsableUpscaler(modelId))
                     return BadRequest(new { error = "This model is not an available image upscaler. Interpolation, face restoration and detection use separate pipelines." });
 
                 var config = Plugin.Instance?.Configuration;
                 var serviceUrl = GetValidatedServiceUrl();
 
-                // Docker AI service expects form-urlencoded POST — forward GPU settings
+                // Docker AI service expects form-urlencoded POST â€” forward GPU settings
                 var useGpu = config?.HardwareAcceleration ?? true;
                 var gpuDeviceId = config?.GpuDeviceIndex ?? 0;
                 var formContent = new FormUrlEncodedContent(new[]
@@ -2359,9 +2361,9 @@ namespace JellyfinUpscalerPlugin.Controllers
             }
         }
 
-        // ════════════════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         // Face Restore proxies (v1.6.1.7)
-        // ════════════════════════════════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
         /// <summary>
         /// Proxy: Load a face-restore model (GFPGAN / CodeFormer) on the Docker service.
@@ -2377,7 +2379,7 @@ namespace JellyfinUpscalerPlugin.Controllers
         /// forwarded because the UI reads it to report how many faces were found.
         /// </summary>
         /// <summary>
-        /// v1.8.3.24 — cover detected objects in one frame, for the real-time player loop.
+        /// v1.8.3.24 â€” cover detected objects in one frame, for the real-time player loop.
         ///
         /// This is what discussion #11 actually needed and what v1.8.3.23 still lacked: the
         /// masking existed as a service endpoint nothing called. The player captures frames
@@ -2460,7 +2462,7 @@ namespace JellyfinUpscalerPlugin.Controllers
         }
 
         /// <summary>
-        /// v1.8.3.24 — load the detection model into the AI service. Admin only: it reads a
+        /// v1.8.3.24 â€” load the detection model into the AI service. Admin only: it reads a
         /// file from the service's model directory and holds it in memory.
         /// </summary>
         [HttpPost("object-mask/load-model")]
@@ -2566,7 +2568,7 @@ namespace JellyfinUpscalerPlugin.Controllers
             {
                 // v1.6.1.21 (P1b) - allowlist now derived from the embedded registry (category="face_restore"),
                 // symmetric to the frontend dropdown that v1.6.1.19 auto-populated. Was hardcoded
-                // {gfpgan-v1.4, codeformer} — caused FrontendBackend asymmetric drift any time a new
+                // {gfpgan-v1.4, codeformer} â€” caused FrontendBackend asymmetric drift any time a new
                 // face-restore model was added (UI showed it, backend 400ed). See _faceRestoreModelIds.
                 if (!_faceRestoreModelIds.Value.Contains(model_name))
                     return BadRequest(new { message = "Invalid face-restore model" });
@@ -2926,7 +2928,7 @@ namespace JellyfinUpscalerPlugin.Controllers
 
         /// <summary>
         /// Read the current video-filter configuration for the player quick-menu.
-        /// Any authenticated user — the filter state is exposed so the quick-menu can seed
+        /// Any authenticated user â€” the filter state is exposed so the quick-menu can seed
         /// its live CSS filter preview without admin privileges. Modifications still require
         /// elevation (see POST /filter-config).
         /// </summary>
@@ -2955,7 +2957,7 @@ namespace JellyfinUpscalerPlugin.Controllers
 
         /// <summary>
         /// Persist video-filter changes from the player quick-menu (admin only).
-        /// Only fields present in the request body are updated — partial updates OK.
+        /// Only fields present in the request body are updated â€” partial updates OK.
         /// The per-property setters in PluginConfiguration clamp out-of-range values,
         /// so malformed numbers saturate rather than throw.
         /// </summary>
@@ -3039,7 +3041,7 @@ namespace JellyfinUpscalerPlugin.Controllers
 
                 if (!VideoFilterService.SupportedPresets.Contains(preset))
                     return BadRequest(new { message = "Invalid preset name" });
-                // 'custom' isn't useful for filter-preview (would need full config round-trip) — treat as none
+                // 'custom' isn't useful for filter-preview (would need full config round-trip) â€” treat as none
                 if (preset == "custom") preset = "none";
 
                 var item = _libraryManager.GetItemById(itemGuid);
@@ -3049,7 +3051,7 @@ namespace JellyfinUpscalerPlugin.Controllers
                 var mediaSource = mediaSources?.FirstOrDefault();
                 var videoPath = mediaSource?.Path ?? item.Path;
                 if (string.IsNullOrEmpty(videoPath))
-                    return BadRequest(new { message = "No video path — select a movie or episode, not a library folder" });
+                    return BadRequest(new { message = "No video path â€” select a movie or episode, not a library folder" });
 
                 // Seek to ~10% of runtime, fallback to 10s
                 var seekPosition = TimeSpan.FromSeconds(10);
@@ -3131,3 +3133,4 @@ namespace JellyfinUpscalerPlugin.Controllers
         public double? Denoise { get; set; }
     }
 }
+

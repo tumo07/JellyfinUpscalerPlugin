@@ -1202,6 +1202,8 @@
                         fetch(ApiClient.getUrl('Upscaler/service-health'), { headers: { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' } }).then(function(res) { return res.json(); }).then(function(sData) {
                             out += "GPU Active  : " + (sData.usingGpu ? "YES" : "NO") + "\n";
                             out += "Hardware    : " + (sData.usingGpu ? "GPU" : "CPU") + "\n";
+                            out += "GPU Load    : " + (sData.gpuLoad != null ? sData.gpuLoad.toFixed(1) + "%" : "N/A") + "\n";
+                            out += "GPU VRAM    : " + (sData.gpuVram != null ? (sData.gpuVram / 1024 / 1024).toFixed(0) + " MB" : "N/A") + "\n";
                             out += "Model Loaded: " + (sData.currentModel || "None") + "\n";
                             out += "Provider    : " + (sData.providers && sData.providers[0] ? sData.providers[0] : "?") + "\n";
                             if (!sData.available) out += "WARNING: Backend AI offline or timeout!\n";
@@ -3230,6 +3232,7 @@
         PlayerIntegration.init();
     }
 })();
+
 
 
 

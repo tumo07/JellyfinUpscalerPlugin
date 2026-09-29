@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -217,7 +217,7 @@ namespace JellyfinUpscalerPlugin.Services
 
                 _logger.LogInformation("Switching AI model to: {Model}", modelName);
 
-                // Download model if needed (idempotent — skips if already downloaded)
+                // Download model if needed (idempotent â€” skips if already downloaded)
                 var downloaded = await DownloadModelAsync(modelName, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!downloaded)
@@ -452,6 +452,12 @@ namespace JellyfinUpscalerPlugin.Services
         [JsonPropertyName("using_gpu")]
         public bool UsingGpu { get; set; }
 
+        [JsonPropertyName("gpu_load")]
+        public float? GpuLoad { get; set; }
+
+        [JsonPropertyName("gpu_vram")]
+        public long? GpuVram { get; set; }
+
         [JsonPropertyName("loaded_models")]
         public string[] LoadedModels { get; set; } = Array.Empty<string>();
 
@@ -465,3 +471,4 @@ namespace JellyfinUpscalerPlugin.Services
         public int InputFrames { get; set; } = 1;
     }
 }
+
