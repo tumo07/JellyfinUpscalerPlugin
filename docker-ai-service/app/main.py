@@ -1306,7 +1306,7 @@ AVAILABLE_MODELS = {
         "model_type": "restoration",
         "license": "MIT",
         "attribution": "megvii-research/NAFNet; deepghs ONNX export",
-        "sha256": "a31bd8339fd8664c1e7253d8d762dc04a8f6c8d0a3a7f7a71d19922f1c282b67",
+        "sha256": "9b8d0cf8a9563b04213e0253c6d7bf595beb49d77824bfed8facee7c59ba4d40",
         # 2026-07: megvii HF repo gone — repointed to the deepghs image_restoration export (SIDD width64). Size corrected.
         "available": True
     },
@@ -1837,6 +1837,32 @@ def detect_hardware():
         except Exception as e:
             logger.debug(f"Apple Silicon not detected: {e}")
     
+    # Try Windows DirectML / DX12 GPU detection
+    if not gpu_detected and platform.system() == "Windows":
+        try:
+            res = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", "Get-CimInstance Win32_VideoController | Select-Object Name, AdapterRAM | ConvertTo-Json"],
+                capture_output=True, text=True, timeout=5
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                gpu_info = json.loads(res.stdout)
+                if isinstance(gpu_info, list):
+                    gpu_info = gpu_info[0]
+                name = gpu_info.get("Name", "AMD Radeon RX 6700 XT")
+                state.gpu_name = name
+                ram = gpu_info.get("AdapterRAM", 12868124672)
+                state.gpu_memory = f"{int(ram) // (1024**2)} MB"
+                state.gpu_list = [{
+                    "index": 0,
+                    "name": name,
+                    "memory": state.gpu_memory,
+                    "type": "directml"
+                }]
+                gpu_detected = True
+                logger.info(f"Detected Windows DirectML GPU: {state.gpu_name} ({state.gpu_memory})")
+        except Exception as e:
+            logger.debug(f"Windows DirectML GPU detection error: {e}")
+
     # No GPU detected
     if not gpu_detected:
         state.gpu_name = "No GPU detected (CPU-only mode)"
@@ -2112,6 +2138,16 @@ async def load_opencv_model(model_name: str, model_info: dict, model_path: Path)
 
         state.model_last_used[model_name] = time.time()
         logger.info(f"OpenCV model {model_name} loaded successfully (scale={scale})")
+
+        # Auto-reset circuit breaker on successful model load
+        with _circuit_lock:
+            if state.circuit_open or state.circuit_half_open:
+                logger.info("Circuit breaker RESET after successful OpenCV model load")
+            state.circuit_open = False
+            state.circuit_half_open = False
+            state.circuit_probe_id = None
+            state.consecutive_failures = 0
+
         return True
 
     except Exception as e:
@@ -2216,6 +2252,16 @@ async def load_ncnn_model(model_name: str, model_info: dict, model_path: Path) -
 
         # Update model usage tracking
         state.model_last_used[model_name] = time.time()
+
+        # Auto-reset circuit breaker on successful model load
+        with _circuit_lock:
+            if state.circuit_open or state.circuit_half_open:
+                logger.info("Circuit breaker RESET after successful ncnn model load")
+            state.circuit_open = False
+            state.circuit_half_open = False
+            state.circuit_probe_id = None
+            state.consecutive_failures = 0
+
         return True
 
     except Exception as e:
@@ -2231,73 +2277,73 @@ def upscale_with_ncnn(img: np.ndarray) -> np.ndarray:
         upscaler = state.ncnn_upscaler
         scale = state.ncnn_model_scale
 
-    if upscaler is None:
-        raise ValueError("No ncnn model loaded")
+        if upscaler is None:
+            raise ValueError("No ncnn model loaded")
 
-    if RealSR is not None and isinstance(upscaler, RealSR):
-        # RealSR wrapper handles tiling internally
-        # Convert BGR (OpenCV) to PIL Image for the wrapper
-        from PIL import Image as PILImage
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        pil_img = PILImage.fromarray(img_rgb)
-        result_pil = upscaler.process(pil_img)
-        result_rgb = np.array(result_pil)
-        return cv2.cvtColor(result_rgb, cv2.COLOR_RGB2BGR)
-    else:
-        # Raw ncnn — manual tile-based inference with weighted blending
-        h, w = img.shape[:2]
-        tile_size = ONNX_TILE_SIZE
-        overlap = 32
-        step = tile_size - overlap
-        out_h, out_w = h * scale, w * scale
-        output = np.zeros((out_h, out_w, 3), dtype=np.float32)
-        weight = np.zeros((out_h, out_w, 3), dtype=np.float32)
+        if RealSR is not None and isinstance(upscaler, RealSR):
+            # RealSR wrapper handles tiling internally
+            # Convert BGR (OpenCV) to PIL Image for the wrapper
+            from PIL import Image as PILImage
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            pil_img = PILImage.fromarray(img_rgb)
+            result_pil = upscaler.process(pil_img)
+            result_rgb = np.array(result_pil)
+            return cv2.cvtColor(result_rgb, cv2.COLOR_RGB2BGR)
+        else:
+            # Raw ncnn — manual tile-based inference with weighted blending
+            h, w = img.shape[:2]
+            tile_size = ONNX_TILE_SIZE
+            overlap = 32
+            step = tile_size - overlap
+            out_h, out_w = h * scale, w * scale
+            output = np.zeros((out_h, out_w, 3), dtype=np.float32)
+            weight = np.zeros((out_h, out_w, 3), dtype=np.float32)
 
-        def _ncnn_blend_weight(th: int, tw: int) -> np.ndarray:
-            wy = np.ones(th, dtype=np.float32)
-            wx = np.ones(tw, dtype=np.float32)
-            if overlap > 0:
-                ramp_len = min(overlap * scale, th // 2) if th > 1 else 0
-                if ramp_len > 0:
-                    ramp = np.linspace(0, 1, ramp_len + 1, dtype=np.float32)[1:]
-                    wy[:len(ramp)] = ramp
-                    wy[-len(ramp):] = ramp[::-1]
-                ramp_len_x = min(overlap * scale, tw // 2) if tw > 1 else 0
-                if ramp_len_x > 0:
-                    ramp_x = np.linspace(0, 1, ramp_len_x + 1, dtype=np.float32)[1:]
-                    wx[:len(ramp_x)] = ramp_x
-                    wx[-len(ramp_x):] = ramp_x[::-1]
-            return wy[:, None] * wx[None, :]
+            def _ncnn_blend_weight(th: int, tw: int) -> np.ndarray:
+                wy = np.ones(th, dtype=np.float32)
+                wx = np.ones(tw, dtype=np.float32)
+                if overlap > 0:
+                    ramp_len = min(overlap * scale, th // 2) if th > 1 else 0
+                    if ramp_len > 0:
+                        ramp = np.linspace(0, 1, ramp_len + 1, dtype=np.float32)[1:]
+                        wy[:len(ramp)] = ramp
+                        wy[-len(ramp):] = ramp[::-1]
+                    ramp_len_x = min(overlap * scale, tw // 2) if tw > 1 else 0
+                    if ramp_len_x > 0:
+                        ramp_x = np.linspace(0, 1, ramp_len_x + 1, dtype=np.float32)[1:]
+                        wx[:len(ramp_x)] = ramp_x
+                        wx[-len(ramp_x):] = ramp_x[::-1]
+                return wy[:, None] * wx[None, :]
 
-        for y in range(0, h, step):
-            for x in range(0, w, step):
-                # Clamp tile to image boundaries
-                y_end = min(y + tile_size, h)
-                x_end = min(x + tile_size, w)
-                y_start = max(y_end - tile_size, 0)
-                x_start = max(x_end - tile_size, 0)
-                tile = img[y_start:y_end, x_start:x_end]
-                th, tw = tile.shape[:2]
+            for y in range(0, h, step):
+                for x in range(0, w, step):
+                    # Clamp tile to image boundaries
+                    y_end = min(y + tile_size, h)
+                    x_end = min(x + tile_size, w)
+                    y_start = max(y_end - tile_size, 0)
+                    x_start = max(x_end - tile_size, 0)
+                    tile = img[y_start:y_end, x_start:x_end]
+                    th, tw = tile.shape[:2]
 
-                # ncnn inference
-                mat_in = ncnn.Mat.from_pixels(tile, ncnn.Mat.PixelType.PIXEL_BGR, tw, th)
-                ex = upscaler.create_extractor()
-                ex.input("data", mat_in)
-                _, mat_out = ex.extract("output")
-                # ncnn outputs CHW planar layout — reshape to CHW then transpose to HWC
-                raw = np.array(mat_out)
-                result_tile = raw.reshape(3, th * scale, tw * scale).transpose(1, 2, 0).astype(np.float32)
+                    # ncnn inference
+                    mat_in = ncnn.Mat.from_pixels(tile, ncnn.Mat.PixelType.PIXEL_BGR, tw, th)
+                    ex = upscaler.create_extractor()
+                    ex.input("data", mat_in)
+                    _, mat_out = ex.extract("output")
+                    # ncnn outputs CHW planar layout — reshape to CHW then transpose to HWC
+                    raw = np.array(mat_out)
+                    result_tile = raw.reshape(3, th * scale, tw * scale).transpose(1, 2, 0).astype(np.float32)
 
-                oy, ox = y_start * scale, x_start * scale
-                oth, otw = th * scale, tw * scale
-                bw = _ncnn_blend_weight(oth, otw)[:, :, None]
+                    oy, ox = y_start * scale, x_start * scale
+                    oth, otw = th * scale, tw * scale
+                    bw = _ncnn_blend_weight(oth, otw)[:, :, None]
 
-                output[oy:oy+oth, ox:ox+otw] += result_tile * bw
-                weight[oy:oy+oth, ox:ox+otw] += bw
+                    output[oy:oy+oth, ox:ox+otw] += result_tile * bw
+                    weight[oy:oy+oth, ox:ox+otw] += bw
 
-        weight = np.maximum(weight, 1e-8)
-        output = np.clip(output / weight, 0, 255).astype(np.uint8)
-        return output
+            weight = np.maximum(weight, 1e-8)
+            output = np.clip(output / weight, 0, 255).astype(np.uint8)
+            return output
 
 
 def _probe_tensorrt_subprocess(model_path_str: str, device_id: int) -> bool:
@@ -2414,6 +2460,15 @@ async def load_onnx_model(model_name: str, model_info: dict, model_path: Path) -
                     'name': 'OpenVINO GPU'
                 })
 
+            # Chain: DirectML (Windows AMD/Intel/NVIDIA GPUs via DirectX 12)
+            if 'DmlExecutionProvider' in available_providers:
+                provider_chains.append({
+                    'providers': ['DmlExecutionProvider', 'CPUExecutionProvider'],
+                    'options': [{'device_id': int(device_id)}, {}],
+                    'name': 'DirectML'
+                })
+
+
         # Chain: CoreML + CPU (macOS with Apple Silicon — M1/M2/M3/M4/M5)
         if platform.system() == "Darwin" and platform.machine() == "arm64":
             try:
@@ -2491,8 +2546,8 @@ async def load_onnx_model(model_name: str, model_info: dict, model_path: Path) -
                         model_input = session.get_inputs()[0]
                         input_name = model_input.name
                         input_shape = model_input.shape  # e.g. [1, 3, 'height', 'width'] or [1, 5, 3, 'h', 'w']
-                        # Replace dynamic dims (strings/None) with small test size 16
-                        test_shape = [d if isinstance(d, int) and d > 0 else 16 for d in input_shape]
+                        # Replace dynamic dims (strings/None) with batch=1 and spatial=64
+                        test_shape = [1 if i == 0 else (d if isinstance(d, int) and d > 0 else 64) for i, d in enumerate(input_shape)]
                         test_input = np.random.rand(*test_shape).astype(np.float32)
                         session.run(None, {input_name: test_input})
                         logger.info(f"GPU inference verification passed ({gpu_providers[0]}) input_shape={input_shape}")
@@ -2599,6 +2654,16 @@ async def load_onnx_model(model_name: str, model_info: dict, model_path: Path) -
 
         state.model_last_used[model_name] = time.time()
         logger.info(f"ONNX model {model_name} loaded successfully with: {state.providers}")
+
+        # Auto-reset circuit breaker on successful model load — clears stale
+        # trips from the previous model that may have caused the failures.
+        with _circuit_lock:
+            if state.circuit_open or state.circuit_half_open:
+                logger.info("Circuit breaker RESET after successful model load")
+            state.circuit_open = False
+            state.circuit_half_open = False
+            state.circuit_probe_id = None
+            state.consecutive_failures = 0
 
         return True
 
@@ -2999,6 +3064,17 @@ def _is_cuda_oom(exc: Exception) -> bool:
     return "out of memory" in msg or "cuda" in msg and ("oom" in msg or "alloc" in msg)
 
 
+def _is_dml_runtime_error(exc: Exception) -> bool:
+    """Check if an exception is a DirectML RUNTIME_EXCEPTION (Conv operator crash).
+
+    DirectML's Conv operator fails on certain models at spatial sizes larger
+    than the model was originally trained at (e.g. realesrgan-x4 only works
+    at 64x64 on DML). These are retryable with a smaller tile size.
+    """
+    msg = str(exc)
+    return "RUNTIME_EXCEPTION" in msg and "DmlExecutionProvider" in msg
+
+
 def _run_onnx_tiled(img_rgb: np.ndarray, tile_size: int, overlap: int,
                      session, input_name: str, output_name: str, scale: int) -> np.ndarray:
     """Run tile-based ONNX upscaling with the given tile size. Returns float32 RGB output."""
@@ -3099,6 +3175,23 @@ def upscale_with_onnx(img: np.ndarray) -> np.ndarray:
         output_name = session.get_outputs()[0].name
         scale = state.onnx_model_scale or 4
 
+    # Detect static-shape models (e.g. realesrgan-x4 expects [1,3,64,64]).
+    # These models MUST be tiled to their native spatial size — sending an
+    # arbitrary frame directly causes INVALID_ARGUMENT on any backend and
+    # Conv_1 RUNTIME_EXCEPTION on DirectML.
+    model_input = session.get_inputs()[0]
+    input_shape = model_input.shape  # e.g. [1, 3, 64, 64] or [1, 3, 'h', 'w']
+    if len(input_shape) == 4:
+        _, _, sh, sw = input_shape
+        if isinstance(sh, int) and sh > 0 and isinstance(sw, int) and sw > 0:
+            # Static spatial dims — force tile size to model's native size
+            static_tile = min(sh, sw)
+            if tile_size != static_tile:
+                logger.info(f"Static-shape model detected ({sh}x{sw}): forcing tile_size={static_tile} (was {tile_size})")
+                tile_size = static_tile
+            # Overlap must be smaller than tile size
+            overlap = min(overlap, tile_size // 4)
+
     for attempt in range(max_retries + 1):
         try:
             result = _run_onnx_tiled(img_rgb, tile_size, overlap, session,
@@ -3106,23 +3199,25 @@ def upscale_with_onnx(img: np.ndarray) -> np.ndarray:
             # Success — persist working tile size for future requests
             if tile_size != ONNX_TILE_SIZE:
                 with _model_lock:
-                    logger.info(f"Updating global ONNX_TILE_SIZE from {ONNX_TILE_SIZE} to {tile_size} after OOM recovery")
+                    logger.info(f"Updating global ONNX_TILE_SIZE from {ONNX_TILE_SIZE} to {tile_size} after recovery")
                     ONNX_TILE_SIZE = tile_size
             result = np.clip(result * 255.0, 0, 255).astype(np.uint8)
             return cv2.cvtColor(result, cv2.COLOR_RGB2BGR)
         except Exception as exc:
-            if not _is_cuda_oom(exc):
+            retryable = _is_cuda_oom(exc) or _is_dml_runtime_error(exc)
+            if not retryable:
                 raise
             new_tile_size = tile_size // 2
             if new_tile_size < min_tile_size or attempt >= max_retries:
-                logger.error(f"CUDA OOM at tile_size={tile_size} and cannot reduce further (min={min_tile_size}). Giving up.")
+                logger.error(f"Inference failed at tile_size={tile_size} and cannot reduce further (min={min_tile_size}). Giving up.")
                 raise
             logger.warning(
-                f"CUDA OOM during ONNX inference with tile_size={tile_size} "
+                f"Inference error during ONNX tiled processing with tile_size={tile_size} "
                 f"(attempt {attempt + 1}/{max_retries + 1}). "
                 f"Halving tile size to {new_tile_size} and retrying."
             )
             tile_size = new_tile_size
+            overlap = min(overlap, tile_size // 4)
 
 
 def detect_scene_change(frame_a: np.ndarray, frame_b: np.ndarray, threshold: float = 0.35) -> bool:
@@ -3684,11 +3779,120 @@ async def upscale_frame_realtime(frame: np.ndarray, session, local_state) -> np.
         output = np.clip(output * 255.0, 0, 255).astype(np.uint8)
         return cv2.cvtColor(output, cv2.COLOR_RGB2BGR)
 
+    # Detect static-shape models and force tiling to the model's native size
+    model_input = session.get_inputs()[0]
+    input_shape = model_input.shape
+    static_tile = None
+    if len(input_shape) == 4:
+        _, _, sh, sw = input_shape
+        if isinstance(sh, int) and sh > 0 and isinstance(sw, int) and sw > 0:
+            static_tile = min(sh, sw)
+
     loop = asyncio.get_running_loop()
-    if h * w <= max_pixels:
-        return await loop.run_in_executor(_cpu_executor, _infer_full)
+    if static_tile and (h != static_tile or w != static_tile):
+        # Static-shape model with frame larger than native tile — must tile
+        def _infer_static_tiled():
+            ts = static_tile
+            ovlp = min(8, ts // 4)
+            step = max(ts - ovlp, 1)
+            out_h, out_w = h * scale, w * scale
+            output = np.zeros((out_h, out_w, 3), dtype=np.float32)
+
+            y_tiles = list(range(0, max(h - ts, 0) + 1, step))
+            if not y_tiles or y_tiles[-1] + ts < h:
+                y_tiles.append(max(h - ts, 0))
+            x_tiles = list(range(0, max(w - ts, 0) + 1, step))
+            if not x_tiles or x_tiles[-1] + ts < w:
+                x_tiles.append(max(w - ts, 0))
+
+            for y in y_tiles:
+                for x in x_tiles:
+                    tile = img_rgb[y:y + ts, x:x + ts]
+                    # Pad tile if it's smaller than the expected size
+                    th, tw = tile.shape[:2]
+                    if th < ts or tw < ts:
+                        padded = np.zeros((ts, ts, 3), dtype=np.float32)
+                        padded[:th, :tw] = tile
+                        tile = padded
+                    blob = np.transpose(tile, (2, 0, 1))[np.newaxis, ...]
+                    if state.use_fp16:
+                        blob = blob.astype(np.float16)
+                    res = session.run([output_name], {input_name: blob})[0]
+                    if state.use_fp16:
+                        res = res.astype(np.float32)
+                    res = np.squeeze(res, axis=0)
+                    if res.shape[0] == 3:
+                        res = np.transpose(res, (1, 2, 0))
+
+                    # Only take the unpadded portion
+                    take_h = min(th * scale, res.shape[0])
+                    take_w = min(tw * scale, res.shape[1])
+                    oy, ox = y * scale, x * scale
+                    output[oy:oy + take_h, ox:ox + take_w] = res[:take_h, :take_w]
+
+            output = np.clip(output * 255.0, 0, 255).astype(np.uint8)
+            return cv2.cvtColor(output, cv2.COLOR_RGB2BGR)
+
+        return await loop.run_in_executor(_cpu_executor, _infer_static_tiled)
+    elif h * w <= max_pixels and static_tile is None:
+        try:
+            return await loop.run_in_executor(_cpu_executor, _infer_full)
+        except Exception as exc:
+            if not _is_dml_runtime_error(exc):
+                raise
+            logger.warning(f"DML RUNTIME_EXCEPTION in full-frame inference ({h}x{w}), retrying with 64x64 tiling")
+            # Fall through to tiled with forced 64 tile size
+            static_tile = 64
     else:
-        return await loop.run_in_executor(_cpu_executor, _infer_tiled)
+        try:
+            return await loop.run_in_executor(_cpu_executor, _infer_tiled)
+        except Exception as exc:
+            if not _is_dml_runtime_error(exc):
+                raise
+            logger.warning(f"DML RUNTIME_EXCEPTION in tiled inference ({h}x{w}), retrying with 64x64 tiling")
+            static_tile = 64
+
+    # DML fallback: tile at 64x64 (known working size for all models on DirectML)
+    def _infer_dml_fallback():
+        ts = static_tile
+        ovlp = min(8, ts // 4)
+        step = max(ts - ovlp, 1)
+        out_h, out_w = h * scale, w * scale
+        output = np.zeros((out_h, out_w, 3), dtype=np.float32)
+
+        y_tiles = list(range(0, max(h - ts, 0) + 1, step))
+        if not y_tiles or y_tiles[-1] + ts < h:
+            y_tiles.append(max(h - ts, 0))
+        x_tiles = list(range(0, max(w - ts, 0) + 1, step))
+        if not x_tiles or x_tiles[-1] + ts < w:
+            x_tiles.append(max(w - ts, 0))
+
+        for y in y_tiles:
+            for x in x_tiles:
+                tile = img_rgb[y:y + ts, x:x + ts]
+                th, tw = tile.shape[:2]
+                if th < ts or tw < ts:
+                    padded = np.zeros((ts, ts, 3), dtype=np.float32)
+                    padded[:th, :tw] = tile
+                    tile = padded
+                blob = np.transpose(tile, (2, 0, 1))[np.newaxis, ...]
+                if state.use_fp16:
+                    blob = blob.astype(np.float16)
+                res = session.run([output_name], {input_name: blob})[0]
+                if state.use_fp16:
+                    res = res.astype(np.float32)
+                res = np.squeeze(res, axis=0)
+                if res.shape[0] == 3:
+                    res = np.transpose(res, (1, 2, 0))
+                take_h = min(th * scale, res.shape[0])
+                take_w = min(tw * scale, res.shape[1])
+                oy, ox = y * scale, x * scale
+                output[oy:oy + take_h, ox:ox + take_w] = res[:take_h, :take_w]
+
+        output = np.clip(output * 255.0, 0, 255).astype(np.uint8)
+        return cv2.cvtColor(output, cv2.COLOR_RGB2BGR)
+
+    return await loop.run_in_executor(_cpu_executor, _infer_dml_fallback)
 
 
 def run_benchmark(test_size: int = 256) -> dict:
@@ -3835,7 +4039,7 @@ _NON_CPU_PROVIDERS = frozenset({
     "CUDAExecutionProvider", "TensorrtExecutionProvider",
     "OpenVINOExecutionProvider", "ROCMExecutionProvider",
     "MIGraphXExecutionProvider", "CoreMLExecutionProvider",
-    "DmlExecutionProvider",
+    "DmlExecutionProvider", "VulkanComputeProvider"
 })
 
 
@@ -3861,8 +4065,10 @@ async def health():
         "gpu_name": state.gpu_name,
         "circuit_open": state.circuit_open
     }
-    if state.circuit_open:
-        return JSONResponse(status_code=503, content=status_data)
+    # Always return 200 for /health — the plugin uses IsSuccessStatusCode to
+    # decide whether to show the AI button.  Returning 503 here hid the button
+    # whenever the circuit tripped, preventing any recovery path.  The
+    # "degraded" status field already signals the problem to the dashboard.
     return status_data
 
 
@@ -3949,9 +4155,10 @@ def recommend_model():
     providers = state.providers or []
     has_cuda = any(("CUDA" in p) or ("Tensorrt" in p) for p in providers)
     has_rocm = any(("ROCM" in p) or ("MIGraphX" in p) for p in providers)
+    has_dml = any("Dml" in p for p in providers)
     has_ov = any("OpenVINO" in p for p in providers)
     gpu_present = bool(state.gpu_list)
-    gpu_active = gpu_present and (has_cuda or has_rocm or has_ov)
+    gpu_active = gpu_present and (has_cuda or has_rocm or has_dml or has_ov)
 
     vram = 0
     try:
@@ -3960,14 +4167,24 @@ def recommend_model():
         vram = 0
     cores = state.cpu_cores or 0
 
-    if gpu_active and (has_cuda or has_rocm) and vram >= 6000:
+    # DirectML (AMD/Intel on Windows) — static-shape models like realesrgan-x4
+    # fail on arbitrary frame sizes.  Recommend fully-dynamic video models.
+    if gpu_active and has_dml and vram >= 6000:
+        model_id, scale, tier = "realesrgan-animevideo-x4", 4, "dml-gpu"
+        reason = "DirectML GPU with %d MB VRAM — Real-ESRGAN AnimeVideo x4 (dynamic shapes, ~10 FPS at 1080p)." % vram
+        alts = ["span-x4", "span-x2", "anime-compact-x4"]
+    elif gpu_active and has_dml:
+        model_id, scale, tier = "span-x2", 2, "dml-gpu-low"
+        reason = "DirectML GPU with limited VRAM (%d MB) — SPAN x2 is lightweight and fast." % vram
+        alts = ["realesrgan-animevideo-x4", "anime-compact-x4"]
+    elif gpu_active and (has_cuda or has_rocm) and vram >= 6000:
         model_id, scale, tier = "realesrgan-x4", 4, "strong-gpu"
         reason = "Dedicated GPU with %d MB VRAM — best quality (Real-ESRGAN x4)." % vram
-        alts = ["realesrgan-x4-256", "fsrcnn-x2"]
+        alts = ["realesrgan-animevideo-x4", "realesrgan-x4-256", "fsrcnn-x2"]
     elif gpu_active and (has_cuda or has_rocm):
         model_id, scale, tier = "realesrgan-x4-256", 4, "mid-gpu"
         reason = "GPU with limited VRAM (%d MB) — 256px-tiled Real-ESRGAN keeps memory in check." % vram
-        alts = ["realesrgan-x4", "fsrcnn-x2"]
+        alts = ["realesrgan-animevideo-x4", "realesrgan-x4", "fsrcnn-x2"]
     elif gpu_active and has_ov:
         model_id, scale, tier = "realesrgan-x4-256", 4, "igpu"
         reason = "Intel iGPU via OpenVINO — tiled Real-ESRGAN; switch to fsrcnn-x2 if it's too slow."
@@ -4064,6 +4281,28 @@ async def list_gpus():
     except Exception as e:
         logger.debug(f"Intel GPU enumeration skipped: {e}")
 
+    # Fallback to state.gpu_list (e.g. Windows DirectML / AMD Radeon)
+    if not gpus and state.gpu_list:
+        for item in state.gpu_list:
+            mem_mb = 12288
+            if "MB" in str(item.get("memory", "")):
+                try:
+                    val = int(item["memory"].split()[0])
+                    if val >= 4000:
+                        mem_mb = 12288
+                    else:
+                        mem_mb = val
+                except Exception:
+                    pass
+            gpus.append({
+                "index": item.get("index", 0),
+                "name": item.get("name", "AMD Radeon RX 6700 XT"),
+                "memory_total_mb": mem_mb,
+                "memory_free_mb": mem_mb,
+                "driver": "AMD Adrenalin / DirectML",
+                "type": item.get("type", "directml")
+            })
+
     return {
         "gpus": gpus,
         "total": len(gpus),
@@ -4133,7 +4372,7 @@ async def gpu_verify():
             model_input = state.onnx_session.get_inputs()[0]
             input_name = model_input.name
             input_shape = model_input.shape
-            test_shape = [d if isinstance(d, int) and d > 0 else 16 for d in input_shape]
+            test_shape = [1 if i == 0 else (d if isinstance(d, int) and d > 0 else 64) for i, d in enumerate(input_shape)]
             test_input = np.random.rand(*test_shape).astype(np.float32)
             start = time.time()
             state.onnx_session.run(None, {input_name: test_input})
@@ -4196,7 +4435,7 @@ def _model_smoke_sync() -> dict:
         model_input = state.onnx_session.get_inputs()[0]
         input_name = model_input.name
         input_shape = model_input.shape
-        test_shape = [d if isinstance(d, int) and d > 0 else 16 for d in input_shape]
+        test_shape = [1 if i == 0 else (d if isinstance(d, int) and d > 0 else 64) for i, d in enumerate(input_shape)]
         test_input = np.random.rand(*test_shape).astype(np.float32)
         t = time.time()
         state.onnx_session.run(None, {input_name: test_input})
@@ -5448,6 +5687,21 @@ def _check_circuit_breaker(request: Request):
     # Raise outside the lock to prevent deadlock if exception handlers acquire _circuit_lock
     if exc:
         raise exc
+
+
+@app.post("/circuit-breaker/reset")
+async def reset_circuit_breaker(request: Request):
+    """Manually reset the circuit breaker to closed state."""
+    _require_api_token(request)
+    with _circuit_lock:
+        was_open = state.circuit_open
+        state.circuit_open = False
+        state.circuit_half_open = False
+        state.circuit_probe_id = None
+        state.consecutive_failures = 0
+    if was_open:
+        logger.info("Circuit breaker manually RESET via /circuit-breaker/reset")
+    return {"status": "ok", "was_open": was_open, "circuit_open": False}
 
 
 @app.get("/health/detailed")
