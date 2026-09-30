@@ -2688,7 +2688,8 @@ async def load_onnx_model(model_name: str, model_info: dict, model_path: Path) -
                         input_shape = model_input.shape  # e.g. [1, 3, 'height', 'width'] or [1, 5, 3, 'h', 'w']
                         # Replace dynamic dims (strings/None) with batch=1 and spatial=64
                         test_shape = [1 if i == 0 else (d if isinstance(d, int) and d > 0 else 64) for i, d in enumerate(input_shape)]
-                        test_input = np.random.rand(*test_shape).astype(np.float32)
+                        test_dtype = np.float16 if "float16" in str(getattr(model_input, "type", "")) else np.float32
+                        test_input = np.random.rand(*test_shape).astype(test_dtype)
                         session.run(None, {input_name: test_input})
                         logger.info(f"GPU inference verification passed ({gpu_providers[0]}) input_shape={input_shape}")
                     except Exception as verify_err:

@@ -7,7 +7,7 @@
 
     // Plugin configuration
     const PLUGIN_ID = 'f87f700e-679d-43e6-9c7c-b3a410dc3f22';
-    const PLUGIN_VERSION = '1.8.3.51';
+    const PLUGIN_VERSION = '1.8.3.52';
 
     // Prevent double-init
     if (window._aiUpscalerLoaded) return;
@@ -428,7 +428,34 @@
                     return;
                 }
             } catch (e) { this._fallbackToLanczos(); return; }
-            var profile = ns.ANIME4KJS_SIMPLE_M_2X || ns.ANIME4KJS_SIMPLE_S_2X;
+            // Select high-fidelity Anime4K 4.0.1 model pipeline
+            var preset = (this._config && this._config.Anime4KPreset) || localStorage.getItem('ai_upscaler_anime4k_preset') || 'mode-a';
+            var profile = null;
+            var profileLabel = 'HigherEnd Mode A (HQ 7-Pass)';
+
+            if (preset === 'mode-b' && ns.ANIME4K_HIGHEREND_MODE_B) {
+                profile = ns.ANIME4K_HIGHEREND_MODE_B;
+                profileLabel = 'HigherEnd Mode B (Soft Lines)';
+            } else if (preset === 'mode-c' && ns.ANIME4K_HIGHEREND_MODE_C) {
+                profile = ns.ANIME4K_HIGHEREND_MODE_C;
+                profileLabel = 'HigherEnd Mode C (Denoise)';
+            } else if (preset === 'simple-ul' && ns.ANIME4KJS_SIMPLE_UL_2X) {
+                profile = ns.ANIME4KJS_SIMPLE_UL_2X;
+                profileLabel = 'Simple UL 2x (Ultra Large CNN)';
+            } else if (preset === 'simple-vl' && ns.ANIME4KJS_SIMPLE_VL_2X) {
+                profile = ns.ANIME4KJS_SIMPLE_VL_2X;
+                profileLabel = 'Simple VL 2x (Very Large CNN)';
+            } else if (ns.ANIME4K_HIGHEREND_MODE_A) {
+                profile = ns.ANIME4K_HIGHEREND_MODE_A;
+                profileLabel = 'HigherEnd Mode A (HQ 7-Pass)';
+            } else if (ns.ANIME4KJS_SIMPLE_UL_2X) {
+                profile = ns.ANIME4KJS_SIMPLE_UL_2X;
+                profileLabel = 'Simple UL 2x (Ultra Large CNN)';
+            } else {
+                profile = ns.ANIME4KJS_SIMPLE_VL_2X || ns.ANIME4KJS_SIMPLE_M_2X || ns.ANIME4KJS_SIMPLE_S_2X;
+                profileLabel = 'Simple VL 2x';
+            }
+
             if (!profile) {
                 console.warn('AI Upscaler RT: Anime4K profile missing');
                 this._fallbackToLanczos();
@@ -439,6 +466,7 @@
                 this._anime4kCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none;z-index:999;';
                 var parent = this._videoElement.parentElement;
                 if (parent) { parent.style.position = 'relative'; parent.appendChild(this._anime4kCanvas); }
+                this._anime4kProfileName = profileLabel;
                 this._anime4kInstance = new VideoUpscaler(profile);
                 this._anime4kInstance.onFpsUpdate = function(fps) {
                     RealtimeUpscaler._currentFps = fps;
@@ -446,7 +474,7 @@
                 };
                 this._anime4kInstance.attachVideo(this._videoElement, this._anime4kCanvas);
                 this._anime4kInstance.start();
-                console.log('AI Upscaler RT: Anime4K (embedded, SIMPLE_M 2x) started');
+                console.log('AI Upscaler RT: Anime4K (' + profileLabel + ') started');
             } catch (e) {
                 console.warn('AI Upscaler RT: Anime4K init threw', e);
                 this._fallbackToLanczos();
@@ -1418,6 +1446,9 @@
                         out += "Target Scale: " + (st.benchmark.serverScale || cfg.ScaleFactor || 2) + "x\n";
                     }
                     if (st.reason) out += "Notice: " + st.reason + "\n";
+                    if (st.mode === 'anime4k') {
+                        out += "Anime4K Pipeline: " + (RealtimeUpscaler._anime4kProfileName || "HigherEnd Mode A (HQ 7-Pass)") + "\n";
+                    }
                     
                     if (st.mode === 'server') {
                         out += "\n=== SERVER STATUS ===\n";
@@ -1686,8 +1717,8 @@
             // The engines realtime playback can run on, in the order the Realtime tab lists them.
             var engines = [
                 ['server', 'Server AI', 'Hardware GPU OpenCL Lanczos4 + Adaptive Sharpening on server. Real-time 60+ FPS.'],
-                ['lanczos', 'WebGL (Lanczos3)', '36-tap Lanczos3 + Edge Tensor sharpening in browser. Ultra-light, 80+ FPS.'],
-                ['anime4k', 'Anime4K', 'Multi-pass anime neural shader in browser. Pushes GPU cores, locks 60 FPS.'],
+                ['lanczos', 'WebGL (Lanczos3)', '36-tap Lanczos3 + CAS sharpening in browser. Pristine sub-pixel lines, 144+ FPS.'],
+                ['anime4k', 'Anime4K v4.0.1', 'HigherEnd Mode A (7-pass VL) & Ultra-Large CNN shaders for anime. 60-120 FPS.'],
                 ['ai-webgpu', 'WebGPU AI', 'Real-ESRGAN Compact neural model in browser via WebGPU compute.']
             ];
             var enginesHtml = '';
@@ -1696,6 +1727,8 @@
                     '<span class="ai-menu__engine-name">' + engines[ei][1] + '</span>' +
                     '<span class="ai-menu__engine-desc">' + engines[ei][2] + '</span></li>';
             }
+            var activeA4kPreset = localStorage.getItem('ai_upscaler_anime4k_preset') || 'mode-a';
+            var isA4kActive = (RealtimeUpscaler._mode === 'anime4k' || (this._cachedConfig && this._cachedConfig.RealtimeMode === 'anime4k'));
             this._fpsHistory = [];
 
             menu.innerHTML =
@@ -1779,6 +1812,15 @@
                         '<div class="ai-menu__section">' +
                             '<div class="ai-menu__section-title"><span>Engines</span><span class="ai-menu__section-sub">default set in All settings</span></div>' +
                             '<ul class="ai-menu__engines">' + enginesHtml + '</ul>' +
+                        '</div>' +
+                        '<div class="ai-menu__section" id="aiAnime4kPresetsSection" style="' + (isA4kActive ? '' : 'display:none;') + '">' +
+                            '<div class="ai-menu__section-title"><span>Anime4K Model Pipeline</span><span class="ai-menu__section-sub">high-fidelity shader models</span></div>' +
+                            '<div class="ai-menu__chips" role="group" aria-label="Anime4K Preset">' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-a' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-a">Mode A (HQ 7-Pass)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'simple-ul' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="simple-ul">Ultra-Large CNN</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-c' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-c">Mode C (Denoise)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-b' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-b">Mode B (Soft)</button>' +
+                            '</div>' +
                         '</div>' +
                     '</div>' +
                     '<div class="ai-menu__pane" data-pane="diag" role="tabpanel">' +
@@ -1879,6 +1921,8 @@
                 if (engineTarget) {
                     var newMode = engineTarget.getAttribute('data-engine');
                     if (newMode === 'lanczos') newMode = 'webgl';
+                    var a4kSec = menu.querySelector('#aiAnime4kPresetsSection');
+                    if (a4kSec) a4kSec.style.display = (newMode === 'anime4k') ? '' : 'none';
                     if (RealtimeUpscaler._mode !== newMode) {
                         PlayerIntegration.updatePluginConfig({ RealtimeMode: newMode }).then(function() {
                             if (RealtimeUpscaler._active) {
@@ -1900,6 +1944,22 @@
                             switchBtn.textContent = newMode === 'server' ? 'Switch to Lanczos' : 'Switch to Server AI';
                         }
                     }
+                    return;
+                }
+                var a4kBtn = e.target.closest('[data-a4k-preset]');
+                if (a4kBtn) {
+                    var a4kPreset = a4kBtn.getAttribute('data-a4k-preset');
+                    localStorage.setItem('ai_upscaler_anime4k_preset', a4kPreset);
+                    var allA4kBtns = menu.querySelectorAll('[data-a4k-preset]');
+                    for (var b = 0; b < allA4kBtns.length; b++) {
+                        allA4kBtns[b].classList.toggle('ai-menu__chip--active', allA4kBtns[b].getAttribute('data-a4k-preset') === a4kPreset);
+                    }
+                    if (RealtimeUpscaler._active && RealtimeUpscaler._mode === 'anime4k') {
+                        RealtimeUpscaler.stop();
+                        var a4kVideo = PlayerIntegration.findVideoElement();
+                        if (a4kVideo) RealtimeUpscaler.start(a4kVideo, PlayerIntegration._cachedConfig, RealtimeUpscaler._lastBenchmark);
+                    }
+                    PlayerIntegration.showPlayerNotification('Anime4K model: ' + a4kBtn.textContent, 'info');
                     return;
                 }
                 var presetBtn = e.target.closest('[data-preset]');
