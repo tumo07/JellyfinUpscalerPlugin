@@ -626,8 +626,8 @@ namespace JellyfinUpscalerPlugin.Services
                     return Pick($"Anime batch job on {(width > 0 ? $"{width}x{height}" : "large")} material - 2x; a 4x pass would target 8K for no visible gain.",
                         "apisr-anime-x2", "span-x2", "realesrgan-animevideo-x4");
                 }
-                return Pick("Anime content in real time -> lightweight anime compact model (speed first).",
-                    "anime-compact-x4", "realesrgan-animevideo-x4", "realesrgan-x4");
+                return Pick("Anime content in real time -> hardware GPU real-time model (1440p target).",
+                    "gpu-fast-x2", "nomosuni-compact-x2", "span-x2", "anime-compact-x4");
             }
 
             var liveActionOverride = Config.PreferredLiveActionModel;
@@ -642,11 +642,11 @@ namespace JellyfinUpscalerPlugin.Services
             {
                 if (isLowRes)
                 {
-                    return Pick($"Low resolution ({width}x{height}) in real time -> SPAN 2x stays fast and keeps the output size manageable.",
-                        "span-x2", "nomosuni-compact-x2", "realesrgan-x4");
+                    return Pick($"Low resolution ({width}x{height}) in real time -> GPU Fast 2x stays fast and keeps the output size manageable.",
+                        "gpu-fast-x2", "span-x2", "nomosuni-compact-x2", "fsrcnn-x2");
                 }
-                return Pick("HD content in real time -> ultra-fast 2x model for mild enhancement.",
-                    "nomosuni-compact-x2", "span-x2", "realesrgan-x4");
+                return Pick("HD content in real time -> hardware GPU real-time model for 1440p output.",
+                    "gpu-fast-x2", "nomosuni-compact-x2", "span-x2", "fsrcnn-x2");
             }
 
             if (isVeryLowRes)

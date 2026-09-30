@@ -155,7 +155,7 @@ namespace JellyfinUpscalerPlugin
         // ── AI Service Configuration (Docker) ────────────────────────────
 
         /// <summary>Base URL of the Docker AI upscaler service.</summary>
-        public string AiServiceUrl { get; set; } = "http://localhost:5000";
+        public string AiServiceUrl { get; set; } = "http://127.0.0.1:5000";
 
         /// <summary>Bearer/X-Api-Token shared secret used to authenticate to the Docker AI service. Must match the API_TOKEN env var on the container.</summary>
         public string AiServiceApiToken { get; set; } = string.Empty;
@@ -217,11 +217,11 @@ namespace JellyfinUpscalerPlugin
             set => _realtimeTargetFps = Math.Clamp(value, 1, 120); // v1.7.2 - UI max=120
         }
 
-        /// <summary>Capture width for real-time server-side upscaling.</summary>
+        /// <summary>Capture width for real-time server-side upscaling. 0 = Native resolution (no downscaling).</summary>
         public int RealtimeCaptureWidth
         {
             get => _realtimeCaptureWidth;
-            set => _realtimeCaptureWidth = Math.Clamp(value, 160, 1920); // v1.7.2 - fix lower-bound drift (UI min=160 max=1920)
+            set => _realtimeCaptureWidth = value <= 0 ? 0 : Math.Clamp(value, 160, 3840);
         }
 
         // ── Auto Model Selection ─────────────────────────────────────────

@@ -70,6 +70,7 @@ namespace JellyfinUpscalerPlugin.Services
             ["lapsrn-x4"] = Weight.Light,
             ["lapsrn-x8"] = Weight.Light,
             ["nomosuni-compact-x2"] = Weight.Light,
+            ["gpu-fast-x2"] = Weight.Light,
             ["anime-compact-x4"] = Weight.Light,
             // clearreality-x4 measured 32x faster than realesrgan-x4 per CPU tile (v1.8.3.4 eval)
             ["clearreality-x4"] = Weight.Light,

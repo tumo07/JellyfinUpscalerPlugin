@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -232,7 +232,7 @@ namespace JellyfinUpscalerPlugin.Controllers
         /// </summary>
         private string GetValidatedServiceUrl()
         {
-            const string fallback = "http://localhost:5000";
+            const string fallback = "http://127.0.0.1:5000";
             var config = Plugin.Instance?.Configuration;
             var url = config?.AiServiceUrl?.Trim();
 
@@ -251,6 +251,15 @@ namespace JellyfinUpscalerPlugin.Controllers
             {
                 _logger.LogWarning("AiServiceUrl rejected (invalid scheme: {Scheme}), using fallback", uri?.Scheme ?? "null");
                 return fallback;
+            }
+
+            // On Windows, 'localhost' resolves to IPv6 [::1] first. If the Python AI service
+            // only listens on IPv4 (0.0.0.0:5000), .NET will stall for 3000ms on TCP SYN timeout.
+            // Replace 'localhost' with '127.0.0.1' to force direct, zero-delay IPv4 connection.
+            if (uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+            {
+                var builder = new UriBuilder(uri) { Host = "127.0.0.1" };
+                return builder.Uri.ToString().TrimEnd('/');
             }
 
             return url.TrimEnd('/');
@@ -881,6 +890,50 @@ namespace JellyfinUpscalerPlugin.Controllers
             if (string.IsNullOrWhiteSpace(modelName) || !Regex.IsMatch(modelName, "^[a-zA-Z0-9._-]{1,64}$"))
                 return Task.FromResult<ActionResult>(BadRequest(new { error = "invalid model name" }));
             return ProxyServiceAsync(HttpMethod.Delete, $"/models/upload/{Uri.EscapeDataString(modelName)}");
+        }
+
+        /// <summary>v1.8.3.48 - serve an ONNX/neural model file to client for WebGPU AI.</summary>
+        [HttpGet("models/file/{modelName}")]
+        public ActionResult GetModelFile([FromRoute] string modelName)
+        {
+            if (string.IsNullOrWhiteSpace(modelName) || !Regex.IsMatch(modelName, "^[a-zA-Z0-9._-]{1,64}$"))
+                return BadRequest(new { error = "invalid model name" });
+
+            var candidateDirs = new List<string>();
+            var envModels = Environment.GetEnvironmentVariable("MODELS_DIR");
+            if (!string.IsNullOrEmpty(envModels) && Directory.Exists(envModels))
+                candidateDirs.Add(envModels);
+
+            if (Plugin.Instance != null && !string.IsNullOrEmpty(Plugin.Instance.DataFolderPath))
+            {
+                var dataModels = Path.Combine(Plugin.Instance.DataFolderPath, "models");
+                if (Directory.Exists(dataModels)) candidateDirs.Add(dataModels);
+            }
+
+            var devScratch = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gemini", "antigravity", "scratch", "JellyfinUpscalerPlugin", "docker-ai-service", "models");
+            if (Directory.Exists(devScratch)) candidateDirs.Add(devScratch);
+
+            foreach (var dir in candidateDirs)
+            {
+                var candidatePaths = new[]
+                {
+                    Path.Combine(dir, modelName),
+                    Path.Combine(dir, modelName + ".onnx"),
+                    Path.Combine(dir, modelName + ".pb")
+                };
+
+                foreach (var p in candidatePaths)
+                {
+                    if (System.IO.File.Exists(p))
+                    {
+                        Response.Headers["Cache-Control"] = "public, max-age=31536000, immutable";
+                        var stream = System.IO.File.OpenRead(p);
+                        return File(stream, "application/octet-stream", Path.GetFileName(p));
+                    }
+                }
+            }
+
+            return NotFound(new { error = "Model file not found locally" });
         }
 
         /// <summary>

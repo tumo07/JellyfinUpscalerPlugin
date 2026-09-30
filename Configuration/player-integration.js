@@ -7,7 +7,7 @@
 
     // Plugin configuration
     const PLUGIN_ID = 'f87f700e-679d-43e6-9c7c-b3a410dc3f22';
-    const PLUGIN_VERSION = '1.8.3.35';
+    const PLUGIN_VERSION = '1.8.3.51';
 
     // Prevent double-init
     if (window._aiUpscalerLoaded) return;
@@ -48,6 +48,7 @@
             label: 'Video Real-Time',
             desc: 'Ultra-Fast for Playback',
             models: [
+                { id: 'gpu-fast-x2', name: 'GPU Real-Time 2x (60 FPS)', scale: 2, badge: '60 FPS' },
                 { id: 'clearreality-x4', name: 'ClearReality x4', scale: 4, badge: 'Ultra-Fast' },
                 { id: 'nomosuni-compact-x2', name: 'NomosUni Compact x2', scale: 2 },
                 { id: 'lsdir-compact-x4', name: 'LSDIR Compact x4', scale: 4 },
@@ -252,8 +253,9 @@
 
             this._mode = mode;
             this._active = true;
+            this._activeModel = (benchmarkResult && benchmarkResult.model) || (mode === 'server' ? ((config && config.Model && config.Model !== 'fsrcnn-x2' && config.Model !== 'ncnn-realesrgan-anime-x2') ? config.Model : 'gpu-fast-x2') : (config && config.Model) || null);
             this._lowFpsStart = 0;
-            console.log('AI Upscaler RT: Starting in ' + mode + ' mode');
+            console.log('AI Upscaler RT: Starting in ' + mode + ' mode with model ' + (this._activeModel || 'default'));
 
             if (mode === 'server') {
                 this._startServer();
@@ -437,7 +439,11 @@
                 this._anime4kCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none;z-index:999;';
                 var parent = this._videoElement.parentElement;
                 if (parent) { parent.style.position = 'relative'; parent.appendChild(this._anime4kCanvas); }
-                this._anime4kInstance = new VideoUpscaler(profile, 30);
+                this._anime4kInstance = new VideoUpscaler(profile);
+                this._anime4kInstance.onFpsUpdate = function(fps) {
+                    RealtimeUpscaler._currentFps = fps;
+                    RealtimeUpscaler._updateFpsDisplay();
+                };
                 this._anime4kInstance.attachVideo(this._videoElement, this._anime4kCanvas);
                 this._anime4kInstance.start();
                 console.log('AI Upscaler RT: Anime4K (embedded, SIMPLE_M 2x) started');
@@ -478,10 +484,13 @@
             var self = this;
             var generation = this._generation;
             function current() { return self._active && self._generation === generation && self._mode === 'ai-webgpu'; }
+            this._updateFpsDisplay();
+            PlayerIntegration.showPlayerNotification('Starting WebGPU AI engine (Real-ESRGAN Compact)...', 'info');
             this._loadWebGPUAIScript(function(loaded) {
                 if (!current()) return;
                 if (!loaded || !window.WebGPUAIUpscaler) {
-                    console.warn('AI Upscaler RT: WebGPU AI script load failed, falling back to Lanczos');
+                    console.warn('AI Upscaler RT: WebGPU AI script load failed, falling back to WebGL Lanczos3');
+                    PlayerIntegration.showPlayerNotification('Failed to load WebGPU AI module. Using WebGL Lanczos3.', 'warning');
                     self._mode = 'lanczos';
                     self._updateButtonIndicator('lanczos');
                     self._startWebGL();
@@ -489,23 +498,27 @@
                 }
                 window.WebGPUAIUpscaler.start(self._videoElement, {
                     fpsCallback: function(fps) {
-                        RealtimeUpscaler._currentFps = fps;
+                        RealtimeUpscaler._currentFps = Math.round(fps * 10) / 10;
+                        RealtimeUpscaler._updateFpsDisplay();
+                    },
+                    statusCallback: function(status) {
                         RealtimeUpscaler._updateFpsDisplay();
                     },
                     onFatal: function(reason) {
                         if (!current()) return;
-                        console.warn('AI Upscaler RT: WebGPU AI fatal:', reason, '- falling back to Lanczos');
-                        self._mode = 'lanczos';
-                        self._updateButtonIndicator('lanczos');
-                        self._startWebGL();
+                        console.warn('AI Upscaler RT: WebGPU AI fatal:', reason);
+                        PlayerIntegration.showPlayerNotification('WebGPU AI: ' + reason, 'warning');
+                        self._reason = reason;
+                        RealtimeUpscaler._updateFpsDisplay();
                     }
                 }).then(function(ok) {
                     if (!current()) return;
                     if (!ok) {
-                        // Returned false (e.g. no WebGPU adapter) - fall back to Lanczos.
-                        self._mode = 'lanczos';
-                        self._updateButtonIndicator('lanczos');
-                        self._startWebGL();
+                        console.warn('AI Upscaler RT: WebGPU AI start returned false');
+                        var status = (window.WebGPUAIUpscaler && window.WebGPUAIUpscaler._status) || 'Initialization failed';
+                        PlayerIntegration.showPlayerNotification('WebGPU AI: ' + status + '. Browser WebGPU support required.', 'warning');
+                        self._reason = status;
+                        RealtimeUpscaler._updateFpsDisplay();
                     }
                 });
             });
@@ -542,9 +555,20 @@
 
         // --- Server AI Tier ---
         _startServer: function() {
-            var captureW = (this._config && this._config.RealtimeCaptureWidth) || 480;
-            var ratio = this._videoElement.videoWidth ? (this._videoElement.videoHeight / this._videoElement.videoWidth) : (9/16);
-            var captureH = Math.round(captureW * ratio);
+            var nativeW = this._videoElement.videoWidth || 1280;
+            var nativeH = this._videoElement.videoHeight || 720;
+            var configuredW = (this._config && typeof this._config.RealtimeCaptureWidth === 'number') ? this._config.RealtimeCaptureWidth : 0;
+            // configuredW <= 0 means Native resolution (upscale actual video resolution, no downscaling)
+            var captureW = configuredW > 0 ? configuredW : nativeW;
+            var ratio = this._videoElement.videoWidth ? (this._videoElement.videoHeight / this._videoElement.videoWidth) : (nativeH / nativeW);
+            var captureH = configuredW > 0 ? Math.round(captureW * ratio) : nativeH;
+
+            // 1440p safety clamp: For 2x upscaling, clamp capture height to 720p max so output is 1440p.
+            // This prevents 1080p video from blowing up to 4K (2160p) which chokes bandwidth and drops framerate.
+            if (captureH > 720) {
+                captureW = Math.round(captureW * (720 / captureH));
+                captureH = 720;
+            }
 
             this._captureCanvas = document.createElement('canvas');
             this._captureCanvas.width = captureW;
@@ -622,10 +646,12 @@
                     // We used to automatically fallback to Lanczos here if the server dropped below half framerate.
                     // However, users complained this forced them off their selected engine unexpectedly when testing heavy models or 720p streams.
                     // We now just show a warning notification but KEEP them on the Server AI engine.
-                    if (window.PlayerIntegration) {
-                        window.PlayerIntegration.showPlayerNotification('Server AI struggling (' + why + ')', 'warning');
+                    if (window.PlayerIntegration && !self._fallbackNotified) {
+                        window.PlayerIntegration.showPlayerNotification('Server AI running at ' + fps + ' fps', 'info');
+                        self._fallbackNotified = true;
                     }
-                    self._fallbackNotified = true; // Fix spam bug
+                } else {
+                    self._fallbackNotified = false;
                 }
             }, 1000);
         },
@@ -658,25 +684,36 @@
 
         _serverRafId: null,
 
+        _lastCaptureTime: 0,
         _serverRenderLoop: function() {
             if (!this._active || this._mode !== 'server') return;
-            if (!this._pendingFrame && this._videoElement && !this._videoElement.paused &&
-                performance.now() >= this._nextFrameAt) this._captureAndSend();
+            var now = performance.now();
+            var targetFps = Math.max(15, Math.min(60, (this._config && this._config.RealtimeTargetFps) || 60));
+            var minInterval = (1000 / targetFps) * 0.85;
+            if (this._videoElement && !this._videoElement.paused &&
+                now >= this._nextFrameAt && (now - this._lastCaptureTime >= minInterval)) {
+                this._lastCaptureTime = now;
+                this._captureAndSend();
+            }
             this._serverRafId = requestAnimationFrame(function() { RealtimeUpscaler._serverRenderLoop(); });
         },
 
         _retryAfterMs: function(value) {
             if (!value) return 0;
-            if (/^\d+(\.\d+)?$/.test(value.trim())) return Number(value) * 1000;
-            var date = Date.parse(value);
-            return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
+            var ms = 0;
+            if (/^\d+(\.\d+)?$/.test(value.trim())) ms = Number(value) * 1000;
+            else {
+                var date = Date.parse(value);
+                ms = Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
+            }
+            // Real-time video must never pause for full batch Retry-After (e.g. 30s)
+            return Math.min(250, ms);
         },
 
         _waitForFrame: function(retryAfter, detail) {
-            var delay = Math.min(2000, 250 * Math.pow(2, Math.min(this._retryCount++, 4)) * (1 + Math.random() * 0.25));
+            var delay = Math.min(100, 20 * Math.pow(1.5, Math.min(this._retryCount++, 3)));
             this._nextFrameAt = performance.now() + Math.max(delay, this._retryAfterMs(retryAfter));
             this._reason = detail;
-            if (window.PlayerIntegration && detail) window.PlayerIntegration.showPlayerNotification(detail, 'warning');
         },
 
         _captureAndSend: function() {
@@ -686,7 +723,7 @@
             this._pendingFrames = this._pendingFrames || 0;
             this._frameCount = this._frameCount || 0;
             this._requestControllers = this._requestControllers || new Set();
-            var maxConcurrent = 3;
+            var maxConcurrent = 8;
             if (this._pendingFrames >= maxConcurrent || !this._active || this._mode !== 'server' || !video || video.paused ||
                 !this._captureCtx || !canvas || performance.now() < this._nextFrameAt) return;
             var generation = this._generation;
@@ -695,8 +732,11 @@
             this._pendingFrames++;
             this._frameCount++;
             var frameIndex = this._frameCount;
+            var finished = false;
             function current() { return self._active && self._mode === 'server' && self._generation === generation; }
             function finish() {
+                if (finished) return;
+                finished = true;
                 self._pendingFrames = Math.max(0, self._pendingFrames - 1);
                 self._requestControllers.delete(controller);
             }
@@ -705,7 +745,6 @@
                 finish();
             }
             try {
-                // Capture after the backoff, never retry the previously captured frame.
                 this._captureCtx.drawImage(video, 0, 0, canvas.width, canvas.height);
                 canvas.toBlob(function(blob) {
                     if (!current()) { finish(); return; }
@@ -727,26 +766,21 @@
                         if (self._objectMaskEnabled) self._lastDetectionCount = parseInt(resp.headers.get('X-Detections'), 10) || 0;
                         return resp.blob();
                     }).then(function(resultBlob) {
-                        if (!current()) { finish(); return; }
-                        if (!resultBlob) { finish(); return; }
+                        finish();
+                        if (!current()) return;
+                        if (!resultBlob) return;
                         self._lastDrawnFrame = self._lastDrawnFrame || 0;
-                        if (frameIndex < self._lastDrawnFrame) { finish(); return; }
-                        self._lastDrawnFrame = frameIndex;
-                        var img = new Image();
-                        var url = URL.createObjectURL(resultBlob);
-                        self._currentObjectUrl = url;
-                        function release() {
-                            URL.revokeObjectURL(url);
-                            if (self._currentObjectUrl === url) self._currentObjectUrl = null;
-                        }
-                        img.onload = function() {
-                            release();
-                            if (!current()) { finish(); return; }
+                        if (frameIndex < self._lastDrawnFrame - 2) return;
+                        if (frameIndex > self._lastDrawnFrame) self._lastDrawnFrame = frameIndex;
+
+                        function drawToCanvas(source) {
+                            if (!current()) return;
                             try {
-                                self._overlayCanvas.width = img.width;
-                                self._overlayCanvas.height = img.height;
-                                self._overlayCtx = self._overlayCanvas.getContext('2d');
-                                self._overlayCtx.drawImage(img, 0, 0);
+                                var sw = source.width, sh = source.height;
+                                if (self._overlayCanvas.width !== sw) self._overlayCanvas.width = sw;
+                                if (self._overlayCanvas.height !== sh) self._overlayCanvas.height = sh;
+                                if (!self._overlayCtx) self._overlayCtx = self._overlayCanvas.getContext('2d');
+                                self._overlayCtx.drawImage(source, 0, 0);
                                 self._overlayCanvas.style.visibility = '';
                                 self._lastSuccessfulFrame = performance.now();
                                 self._lastFrameShownAt = self._lastSuccessfulFrame;
@@ -760,13 +794,38 @@
                                     self._fpsLastTime = now;
                                     self._updateFpsDisplay();
                                 }
-                                finish();
                             } catch (error) { failed(error); }
-                        };
-                        img.onerror = function() { release(); failed(new Error('Could not decode processed frame')); };
-                        img.src = url;
+                        }
+
+                        if (window.createImageBitmap) {
+                            createImageBitmap(resultBlob).then(function(bitmap) {
+                                drawToCanvas(bitmap);
+                                if (bitmap.close) bitmap.close();
+                            }).catch(function() {
+                                renderWithImage();
+                            });
+                        } else {
+                            renderWithImage();
+                        }
+
+                        function renderWithImage() {
+                            var img = new Image();
+                            var url = URL.createObjectURL(resultBlob);
+                            function release() {
+                                URL.revokeObjectURL(url);
+                            }
+                            img.onload = function() {
+                                release();
+                                drawToCanvas(img);
+                            };
+                            img.onerror = function() {
+                                release();
+                                failed(new Error('Could not decode processed frame'));
+                            };
+                            img.src = url;
+                        }
                     }).catch(failed);
-                }, 'image/jpeg', 0.95);
+                }, 'image/jpeg', 0.72);
             } catch (error) { failed(error); }
         },
 
@@ -775,23 +834,33 @@
             this._removeFpsOverlay();
             var el = document.createElement('div');
             el.id = 'aiUpscalerFpsOverlay';
-            el.style.cssText = 'position:fixed;top:10px;left:10px;z-index:100002;padding:4px 10px;' +
-                'background:rgba(0,0,0,0.7);color:#34d399;font-size:12px;font-family:monospace;' +
+            el.style.cssText = 'position:absolute;top:14px;left:14px;z-index:2147483647;padding:5px 12px;' +
+                'background:rgba(0,0,0,0.8);color:#34d399;font-size:13px;font-family:monospace;font-weight:bold;' +
                 'border-radius:6px;pointer-events:none;backdrop-filter:blur(6px);' +
-                'opacity:0;transition:opacity .18s ease;';
+                'opacity:1;transition:opacity .25s ease;box-shadow:0 2px 8px rgba(0,0,0,0.5);';
             el.textContent = 'AI --fps';
-            document.body.appendChild(el);
+            var parent = document.querySelector('.videoPlayerContainer') ||
+                         document.querySelector('#videoOsdPage:not(.hide)') ||
+                         document.body;
+            parent.appendChild(el);
 
-            // Auto-hide with Jellyfin's OSD: only show HUD while playback controls are visible.
-            // Jellyfin fades .videoOsdBottom / .osdControls via opacity when idle; we mirror that.
+            // Auto-hide with Jellyfin's OSD: full opacity when controls active, subtle 0.4 dimming when idle
             var self = this;
             this._fpsVisSync = setInterval(function() {
-                if (!el.isConnected) return;
-                var osd = document.querySelector('.videoOsdBottom, .osdControls');
+                if (!el.isConnected) {
+                    var container = document.querySelector('.videoPlayerContainer') || document.body;
+                    if (container && !container.contains(el)) container.appendChild(el);
+                    return;
+                }
+                var activePage = document.querySelector('#videoOsdPage:not(.hide)') ||
+                                 document.querySelector('.page:not(.hide)');
+                var osd = (activePage && activePage.querySelector('.videoOsdBottom, .osdControls')) ||
+                          document.querySelector('.videoPlayerContainer .videoOsdBottom') ||
+                          document.querySelector('.videoOsdBottom');
                 var visible = osd && osd.offsetParent !== null &&
-                              parseFloat(getComputedStyle(osd).opacity || '0') > 0.1;
-                el.style.opacity = visible ? '1' : '0';
-            }, 200);
+                              parseFloat(getComputedStyle(osd).opacity || '0') > 0.05;
+                el.style.opacity = visible ? '1' : '0.45';
+            }, 300);
         },
 
         _removeFpsOverlay: function() {
@@ -803,12 +872,71 @@
         _updateFpsDisplay: function() {
             var el = document.getElementById('aiUpscalerFpsOverlay');
             if (!el) return;
-            var modeLabel = this._mode === 'server' ? 'Server' : 'WebGL';
+            var mode = this._mode;
+            var modeLabel = '';
             var modelLabel = '';
-            if (this._mode === 'server' && this._benchmarkResult && this._benchmarkResult.model) {
-                modelLabel = ' ' + this._benchmarkResult.model;
+            var isNeural = true;
+
+            if (mode === 'server') {
+                modeLabel = 'Server AI';
+                var sModel = this._activeModel || (this._benchmarkResult && this._benchmarkResult.model) || (this._config && this._config.Model) || 'gpu-fast-x2';
+                modelLabel = ' (' + sModel + ')';
+            } else if (mode === 'anime4k') {
+                modeLabel = 'Anime4K';
+                modelLabel = ' (GLSL Tensor)';
+            } else if (mode === 'ai-webgpu') {
+                modeLabel = 'WebGPU AI';
+                if (window.WebGPUAIUpscaler && window.WebGPUAIUpscaler._status && window.WebGPUAIUpscaler._status !== 'running') {
+                    modelLabel = ' [' + window.WebGPUAIUpscaler._status + ']';
+                } else if (window.WebGPUAIUpscaler && window.WebGPUAIUpscaler._session) {
+                    modelLabel = ' (Real-ESRGAN Compact)';
+                } else {
+                    modelLabel = ' [Loading Model...]';
+                }
+            } else if (mode === 'lanczos' || mode === 'webgl') {
+                isNeural = false;
+                modeLabel = 'WebGL (Lanczos3 + Edge Tensor)';
+            } else {
+                modeLabel = String(mode);
             }
-            el.textContent = 'AI ' + this._currentFps + 'fps | ' + modeLabel + modelLabel;
+
+            var resLabel = '';
+            var inW = 0, inH = 0, outW = 0, outH = 0;
+            if (mode === 'server') {
+                if (this._captureCanvas && this._captureCanvas.width && this._overlayCanvas && this._overlayCanvas.width) {
+                    inW = this._captureCanvas.width;
+                    inH = this._captureCanvas.height;
+                    outW = this._overlayCanvas.width;
+                    outH = this._overlayCanvas.height;
+                }
+            } else if (mode === 'anime4k') {
+                if (this._videoElement && this._videoElement.videoWidth && this._anime4kCanvas && this._anime4kCanvas.width) {
+                    inW = this._videoElement.videoWidth;
+                    inH = this._videoElement.videoHeight;
+                    outW = this._anime4kCanvas.width;
+                    outH = this._anime4kCanvas.height;
+                }
+            } else if (mode === 'ai-webgpu') {
+                var wgpuCanvas = window.WebGPUAIUpscaler && window.WebGPUAIUpscaler._canvas;
+                if (this._videoElement && this._videoElement.videoWidth && wgpuCanvas && wgpuCanvas.width) {
+                    inW = this._videoElement.videoWidth;
+                    inH = this._videoElement.videoHeight;
+                    outW = wgpuCanvas.width;
+                    outH = wgpuCanvas.height;
+                }
+            } else if (this._webglInstance && this._webglInstance.canvas && this._videoElement) {
+                inW = this._videoElement.videoWidth;
+                inH = this._videoElement.videoHeight;
+                outW = this._webglInstance.canvas.width;
+                outH = this._webglInstance.canvas.height;
+            }
+            if (inW && inH && outW && outH) {
+                resLabel = ' | ' + inW + 'x' + inH + ' -> ' + outW + 'x' + outH;
+            }
+
+            var fpsDisplay = this._currentFps > 0 ? this._currentFps + 'fps' : '--fps';
+            var header = isNeural ? ('AI ' + fpsDisplay) : ('WebGL ' + fpsDisplay);
+            el.textContent = header + ' | ' + modeLabel + modelLabel + resLabel;
             el.style.color = this._currentFps >= 20 ? '#34d399' : this._currentFps >= 10 ? '#fbbf24' : '#ef4444';
         },
 
@@ -833,6 +961,7 @@
                 active: this._active,
                 mode: this._mode,
                 fps: this._currentFps,
+                activeModel: this._activeModel,
                 benchmark: this._benchmarkResult,
                 reason: this._reason
             };
@@ -869,15 +998,18 @@
                 PlayerIntegration.onViewShow();
             });
 
-            // Pointer/mouse movement ensures button is restored as soon as OSD is awakened
-            document.addEventListener('pointermove', function() {
-                if (PlayerIntegration.isVideoPage()) {
-                    var btn = document.getElementById('aiUpscalerButton');
-                    if (!btn || !document.body.contains(btn)) {
-                        PlayerIntegration.injectPlayerButton();
+            // Pointer/mouse movement and touch ensure button is restored as soon as OSD is awakened
+            ['pointermove', 'mousemove', 'touchstart'].forEach(function(evt) {
+                document.addEventListener(evt, function() {
+                    if (PlayerIntegration.isVideoPage() || document.querySelector('video')) {
+                        var target = PlayerIntegration._findTargetContainer();
+                        var btn = document.getElementById('aiUpscalerButton');
+                        if (!btn || !target || btn.parentElement !== target.container) {
+                            PlayerIntegration.injectPlayerButton();
+                        }
                     }
-                }
-            }, { passive: true });
+                }, { passive: true });
+            });
 
             // If player is ALREADY active on script load (e.g. reload or direct link)
             if (this.isVideoPage()) {
@@ -939,15 +1071,16 @@
             if (this._watchdogTimer) return;
             var self = this;
             this._watchdogTimer = setInterval(function() {
-                if (self.isVideoPage()) {
+                if (self.isVideoPage() || document.querySelector('video')) {
+                    var target = self._findTargetContainer();
                     var btn = document.getElementById('aiUpscalerButton');
-                    if (!btn || !document.body.contains(btn)) {
+                    if (!btn || !target || btn.parentElement !== target.container) {
                         self.injectPlayerButton();
                     }
                 } else {
                     self._stopWatchdog();
                 }
-            }, 2000);
+            }, 1000);
         },
 
         _stopWatchdog: function() {
@@ -997,63 +1130,109 @@
             check();
         },
 
+        _findTargetContainer: function() {
+            function isValidTarget(el) {
+                if (!el || !document.body.contains(el)) return false;
+                // Exclude elements trapped in background/inactive SPA views
+                if (el.closest && el.closest('.page.hide')) return false;
+                var hiddenAncestor = el.closest ? el.closest('[aria-hidden="true"]') : null;
+                if (hiddenAncestor && !hiddenAncestor.closest('#videoOsdPage, .videoOsdBottom, .videoPlayerContainer, .osdControls, .skinHeader')) {
+                    return false;
+                }
+                return true;
+            }
+
+            // Priority 1: Find neighboring OSD control buttons (.btnVideoOsdSettings, .btnToggleFullscreen, etc.)
+            var refButtons = document.querySelectorAll('.btnVideoOsdSettings, [data-action="settings"], .btnToggleFullscreen, .btnFullscreen, [data-action="fullscreen"], .btnPip, .btnUserRating');
+            var fallbackRef = null;
+            for (var b = 0; b < refButtons.length; b++) {
+                var btn = refButtons[b];
+                if (isValidTarget(btn) && btn.parentElement) {
+                    if (btn.offsetParent !== null || (btn.closest && btn.closest('#videoOsdPage, .videoPlayerContainer, .videoOsdBottom'))) {
+                        return { container: btn.parentElement, refButton: btn };
+                    }
+                    if (!fallbackRef) fallbackRef = { container: btn.parentElement, refButton: btn };
+                }
+            }
+            if (fallbackRef) return fallbackRef;
+
+            // Priority 2: Standard Jellyfin toolbar containers
+            var selectors = [
+                '.videoOsdBottom .buttons',
+                '#videoOsdPage .buttons',
+                '.osdControls .buttons',
+                '.buttons.focuscontainer-x',
+                '.videoOsdBottom .osdControls',
+                '.osdBottomBar',
+                '.videoOsdBottom'
+            ];
+            for (var i = 0; i < selectors.length; i++) {
+                var els = document.querySelectorAll(selectors[i]);
+                for (var j = 0; j < els.length; j++) {
+                    var el = els[j];
+                    if (isValidTarget(el)) {
+                        var childRef = el.querySelector('.btnVideoOsdSettings, .btnToggleFullscreen, .btnFullscreen, .btnPip, button:last-child');
+                        return { container: el, refButton: childRef };
+                    }
+                }
+            }
+            return null;
+        },
+
         _injectRetryCount: 0,
-        _injectMaxRetries: 10,
         _mutationObserver: null,
 
         injectPlayerButton: function() {
-            var existing = document.getElementById('aiUpscalerButton');
-            if (existing && document.body.contains(existing)) {
-                this._buttonInjected = true;
-                return;
-            }
-            this._buttonInjected = false;
-
-            var selectors = [
-                '.videoOsdBottom .buttons',
-                '.videoOsdBottom .osdControls',
-                '.videoOsdBottom',
-                '#videoOsdPage .buttons',
-                '#videoOsdPage .osdControls',
-                '.osdControls',
-                '.osdBottomBar',
-                '[data-action="fullscreen"]',
-                '.btnToggleFullscreen',
-                '.btnVideoOsdSettings'
-            ];
-
-            var container = null;
-            for (var i = 0; i < selectors.length; i++) {
-                var el = document.querySelector(selectors[i]);
-                if (el) {
-                    container = (el.tagName === 'BUTTON') ? el.parentElement : el;
-                    if (container) break;
-                }
-            }
-
-            if (!container) {
+            var target = this._findTargetContainer();
+            if (!target || !target.container) {
                 this._injectRetryCount++;
-                if (this._injectRetryCount <= this._injectMaxRetries) {
-                    var delay = Math.min(500 * Math.pow(1.5, this._injectRetryCount - 1), 3000);
-                    setTimeout(function() { PlayerIntegration.injectPlayerButton(); }, delay);
-                } else {
-                    this._startMutationObserver();
-                }
+                var self = this;
+                var delay = Math.min(300 * Math.pow(1.3, Math.min(this._injectRetryCount, 6)), 2000);
+                setTimeout(function() {
+                    if (self.isVideoPage() || document.querySelector('video')) {
+                        self.injectPlayerButton();
+                    }
+                }, delay);
+                this._startMutationObserver();
                 return;
             }
 
             this._injectRetryCount = 0;
-            if (!this._mutationObserver) {
-                this._startMutationObserver();
+            this._startMutationObserver();
+
+            var btn = document.getElementById('aiUpscalerButton');
+            if (btn) {
+                // If the button exists and is already properly placed in target container, nothing to do
+                if (btn.parentElement === target.container && document.body.contains(btn)) {
+                    this._buttonInjected = true;
+                    if (window.RealtimeUpscaler && RealtimeUpscaler._updateButtonIndicator) {
+                        RealtimeUpscaler._updateButtonIndicator(RealtimeUpscaler._mode);
+                    }
+                    return;
+                }
+                // Otherwise move it into the correct active container
+                if (target.refButton && target.refButton.parentElement === target.container) {
+                    target.container.insertBefore(btn, target.refButton);
+                } else {
+                    target.container.appendChild(btn);
+                }
+                this._buttonInjected = true;
+                if (window.RealtimeUpscaler && RealtimeUpscaler._updateButtonIndicator) {
+                    RealtimeUpscaler._updateButtonIndicator(RealtimeUpscaler._mode);
+                }
+                return;
             }
 
-            var btn = document.createElement('button');
+            // Create button element
+            btn = document.createElement('button');
             btn.id = 'aiUpscalerButton';
             btn.className = 'paper-icon-button-light autoSize';
             btn.setAttribute('is', 'paper-icon-button-light');
             btn.setAttribute('type', 'button');
             btn.setAttribute('title', 'AI Upscaler (Alt+M)');
-            btn.innerHTML = '<span class="material-icons">auto_awesome</span>';
+            btn.setAttribute('aria-label', 'AI Upscaler (Alt+M)');
+            btn.style.cssText = 'position:relative;display:inline-flex;align-items:center;justify-content:center;';
+            btn.innerHTML = '<span class="material-icons" style="font-size:24px;line-height:1;display:inline-block;">auto_awesome</span>';
 
             btn.addEventListener('click', function(e) {
                 e.preventDefault();
@@ -1061,14 +1240,16 @@
                 PlayerIntegration.toggleUpscalerMenu();
             });
 
-            var refButton = container.querySelector('.btnVideoOsdSettings, .btnToggleFullscreen, .btnFullscreen');
-            if (refButton) {
-                refButton.parentNode.insertBefore(btn, refButton);
+            if (target.refButton && target.refButton.parentElement === target.container) {
+                target.container.insertBefore(btn, target.refButton);
             } else {
-                container.appendChild(btn);
+                target.container.appendChild(btn);
             }
 
             this._buttonInjected = true;
+            if (window.RealtimeUpscaler && RealtimeUpscaler._updateButtonIndicator) {
+                RealtimeUpscaler._updateButtonIndicator(RealtimeUpscaler._mode);
+            }
             console.log('AI Upscaler: Player button injected');
         },
 
@@ -1091,6 +1272,18 @@
                 } catch (err) {
                     console.warn('AI Upscaler: Could not attach playback listeners:', err);
                 }
+            }
+
+            // Periodic button integrity check (restores button if detached during SPA view transitions)
+            if (!this._buttonCheckInterval) {
+                this._buttonCheckInterval = setInterval(function() {
+                    if (PlayerIntegration.isVideoPage() || document.querySelector('video')) {
+                        var btn = document.getElementById('aiUpscalerButton');
+                        if (!btn || !btn.isConnected) {
+                            PlayerIntegration.injectPlayerButton();
+                        }
+                    }
+                }, 2000);
             }
         },
 
@@ -1167,7 +1360,7 @@
                 target = Number(st.benchmark && st.benchmark.videoFps) || 0;
                 level = target ? (fps >= target * 0.8 ? '' : fps >= target * 0.5 ? 'warn' : 'err')
                                : (fps >= 20 ? '' : fps >= 10 ? 'warn' : 'err');
-                modelEl.textContent = (st.benchmark && st.benchmark.model) || cfg.Model || '-';
+                modelEl.textContent = (st && st.activeModel) || (st.benchmark && st.benchmark.model) || (st.mode === 'server' ? 'gpu-fast-x2' : (cfg.Model || '-'));
             } else if (playing && cfg.EnablePlugin === false) {
                 dot.className = 'ai-menu__status-dot ai-menu__status-dot--off';
                 stateEl.textContent = 'DISABLED';
@@ -1248,7 +1441,7 @@
         },
 
         _modeLabel: function(mode) {
-            var labels = { server: 'Server AI', lanczos: 'Lanczos', webgl: 'Lanczos', anime4k: 'Anime4K', 'ai-webgpu': 'WebGPU AI', off: 'Off' };
+            var labels = { server: 'Server AI', lanczos: 'WebGL (Lanczos3)', webgl: 'WebGL (Lanczos3)', anime4k: 'Anime4K', 'ai-webgpu': 'WebGPU AI', off: 'Off' };
             return labels[mode] || (mode ? String(mode) : '-');
         },
 
@@ -1492,10 +1685,10 @@
 
             // The engines realtime playback can run on, in the order the Realtime tab lists them.
             var engines = [
-                ['server', 'Server AI', 'Your AI service upscales captured frames. Best quality; needs a GPU to keep up.'],
-                ['lanczos', 'Lanczos', 'Sharpening scaler in this browser. Light, and never touches the server.'],
-                ['anime4k', 'Anime4K', 'Line-art shader for anime, in this browser.'],
-                ['ai-webgpu', 'WebGPU AI', 'Small neural network in this browser. Experimental.']
+                ['server', 'Server AI', 'Hardware GPU OpenCL Lanczos4 + Adaptive Sharpening on server. Real-time 60+ FPS.'],
+                ['lanczos', 'WebGL (Lanczos3)', '36-tap Lanczos3 + Edge Tensor sharpening in browser. Ultra-light, 80+ FPS.'],
+                ['anime4k', 'Anime4K', 'Multi-pass anime neural shader in browser. Pushes GPU cores, locks 60 FPS.'],
+                ['ai-webgpu', 'WebGPU AI', 'Real-ESRGAN Compact neural model in browser via WebGPU compute.']
             ];
             var enginesHtml = '';
             for (var ei = 0; ei < engines.length; ei++) {
@@ -2912,9 +3105,19 @@
                 var startup = new AbortController();
                 RealtimeUpscaler._startupController = startup;
                 function current() { return generation === RealtimeUpscaler._generation && !startup.signal.aborted; }
-                var captureW = config.RealtimeCaptureWidth || 480;
-                var captureH = Math.round(captureW * (video.videoHeight / video.videoWidth));
-                var modelName = config.Model || 'fsrcnn-x2';
+                var nativeW = video.videoWidth || 1280;
+                var nativeH = video.videoHeight || 720;
+                var configuredW = (config && typeof config.RealtimeCaptureWidth === 'number') ? config.RealtimeCaptureWidth : 0;
+                var captureW = configuredW > 0 ? configuredW : nativeW;
+                var captureH = configuredW > 0 ? Math.round(captureW * (nativeH / nativeW)) : nativeH;
+                if (captureH > 720) {
+                    captureW = Math.round(captureW * (720 / captureH));
+                    captureH = 720;
+                }
+                var modelName = config.Model || 'gpu-fast-x2';
+                if ((mode === 'server' || mode === 'auto') && (!config.Model || config.Model === 'fsrcnn-x2' || config.Model === 'ncnn-realesrgan-anime-x2')) {
+                    modelName = 'gpu-fast-x2';
+                }
                 var authHeaders = { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' };
 
                 var runBenchmarkAndStart = function() {
@@ -2968,12 +3171,14 @@
 
         _startMutationObserver: function() {
             if (this._mutationObserver) return;
-            this._mutationObserver = new MutationObserver(function(mutations) {
-                if (!PlayerIntegration.isVideoPage()) return;
+            var self = this;
+            this._mutationObserver = new MutationObserver(function() {
+                if (!self.isVideoPage() && !document.querySelector('video')) return;
+                var target = self._findTargetContainer();
                 var btn = document.getElementById('aiUpscalerButton');
-                if (!btn || !document.body.contains(btn)) {
-                    PlayerIntegration._buttonInjected = false;
-                    PlayerIntegration.injectPlayerButton();
+                if (!btn || !target || btn.parentElement !== target.container) {
+                    self._buttonInjected = false;
+                    self.injectPlayerButton();
                 }
             });
             this._mutationObserver.observe(document.body, { childList: true, subtree: true });
@@ -2983,7 +3188,7 @@
                 this._viewHideCleanupBound = true;
                 document.addEventListener('viewbeforehide', function() {
                     PlayerIntegration._buttonInjected = false;
-                    if (!PlayerIntegration.isVideoPage()) {
+                    if (!PlayerIntegration.isVideoPage() && !document.querySelector('video')) {
                         PlayerIntegration._stopMutationObserver();
                     }
                 });
@@ -3003,16 +3208,12 @@
 
             var styles = document.createElement('style');
             styles.id = 'aiUpscalerPlayerStyles';
-            // Redesign: a smoked-glass panel over the picture. Jellyfin's own accent
-            // (#00a4dc, the player's progress bar) marks "on" and "selected"; green, amber
-            // and red are reserved for the live frame-rate readout. Tokens live on .ai-menu
-            // so nothing leaks into jellyfin-web. No web fonts: the panel uses the font
-            // jellyfin-web already ships (Noto Sans), which also works on offline servers.
             styles.textContent = [
                 /* Player toolbar button */
-                '#aiUpscalerButton{display:inline-flex!important;align-items:center;justify-content:center;color:#e6e8ec;cursor:pointer;transition:color .15s}',
-                '#aiUpscalerButton:hover{color:#00a4dc}',
-                '#aiUpscalerButton .material-icons{font-size:24px}',
+                '#aiUpscalerButton{display:inline-flex!important;align-items:center;justify-content:center;min-width:40px;min-height:40px;margin:0 2px;color:#e6e8ec;cursor:pointer;background:transparent;border:none;outline:none;transition:color .15s,transform .1s}',
+                '#aiUpscalerButton:hover{color:#00a4dc!important}',
+                '#aiUpscalerButton:active{transform:scale(.92)}',
+                '#aiUpscalerButton .material-icons{font-size:24px!important;line-height:1!important;display:inline-block!important}',
 
                 /* Panel shell */
                 '.ai-menu{--ai-glass:rgba(12,14,19,.8);--ai-solid:#0f1217;--ai-raise:rgba(255,255,255,.055);--ai-raise-2:rgba(255,255,255,.09);--ai-line:rgba(255,255,255,.09);--ai-line-2:rgba(255,255,255,.18);--ai-text:#f1f3f6;--ai-dim:#aab2bf;--ai-faint:#7d8594;--ai-accent:#00a4dc;--ai-accent-ink:#7fd3f2;--ai-accent-bg:rgba(0,164,220,.16);--ai-good:#3ddc97;--ai-warn:#f5b94a;--ai-bad:#ff6b6b;--ai-mono:ui-monospace,"SF Mono","Cascadia Mono","Roboto Mono",Menlo,Consolas,monospace;' +

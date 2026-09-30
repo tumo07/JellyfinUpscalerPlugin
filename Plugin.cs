@@ -13,7 +13,7 @@ namespace JellyfinUpscalerPlugin
 {
     /// <summary>
     /// AI Upscaler Plugin for Jellyfin v1.5.5.8
-    /// v1.5.5.8 - Deep scan fixes: targeted library refresh, FFmpeg injection fix, concurrency hardening
+    /// v1.8.3.36 - Deep scan fixes: targeted library refresh, FFmpeg injection fix, concurrency hardening
     /// </summary>
     public class Plugin : BasePlugin<PluginConfiguration>, IHasWebPages
     {

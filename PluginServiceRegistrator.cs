@@ -75,6 +75,13 @@ namespace JellyfinUpscalerPlugin
         internal static void RegisterAiHttpClients(IServiceCollection serviceCollection)
         {
             serviceCollection.AddHttpClient("AiUpscaler", c => c.Timeout = TimeSpan.FromSeconds(120))
+                .ConfigurePrimaryHttpMessageHandler(() => new System.Net.Http.SocketsHttpHandler
+                {
+                    PooledConnectionLifetime = TimeSpan.FromMinutes(15),
+                    PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+                    MaxConnectionsPerServer = 64,
+                    EnableMultipleHttp2Connections = true
+                })
                 .AddHttpMessageHandler<AiServiceAuthHandler>();
             serviceCollection.AddHttpClient("AiUpscalerLongTimeout", c => c.Timeout = TimeSpan.FromSeconds(300))
                 .AddHttpMessageHandler<AiServiceAuthHandler>();

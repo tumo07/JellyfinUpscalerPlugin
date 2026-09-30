@@ -154,7 +154,9 @@ namespace JellyfinUpscalerPlugin.Tests.Services
                 "anime-compact-x4",
                 "realesrgan-animevideo-x4",
                 "apisr-anime-x2",
-                "span-x2");
+                "span-x2",
+                "gpu-fast-x2",
+                "nomosuni-compact-x2");
         }
 
         // ──────────────────────────────────────────────────────────────────────
