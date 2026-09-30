@@ -7,7 +7,7 @@
 
     // Plugin configuration
     const PLUGIN_ID = 'f87f700e-679d-43e6-9c7c-b3a410dc3f22';
-    const PLUGIN_VERSION = '1.8.3.53';
+    const PLUGIN_VERSION = '1.8.3.54';
 
     // Prevent double-init
     if (window._aiUpscalerLoaded) return;
@@ -363,8 +363,9 @@
                 this._currentFps = Math.round(this._fpsFrameCount * 1000 / (now - this._fpsLastTime));
                 this._fpsFrameCount = 0;
                 this._fpsLastTime = now;
+                this._updateFpsDisplay();
             }
-            if ('requestVideoFrameCallback' in this._videoElement) {
+            if (this._videoElement && 'requestVideoFrameCallback' in this._videoElement) {
                 this._videoElement.requestVideoFrameCallback(this._anime4kFpsLoop.bind(this));
             } else {
                 requestAnimationFrame(this._anime4kFpsLoop.bind(this));
@@ -413,8 +414,8 @@
         },
 
         _getAnime4KPreset: function() {
-            var userPreset = (this._config && this._config.Anime4KPreset) || localStorage.getItem('ai_upscaler_anime4k_preset');
-            if (userPreset) return userPreset;
+            var localPreset = localStorage.getItem('ai_upscaler_anime4k_preset');
+            if (localPreset) return localPreset;
             var gpuDesc = '';
             try {
                 var testCanvas = document.createElement('canvas');
@@ -427,7 +428,7 @@
             if (/intel|uhd|hd graphics|iris|radeon vega/i.test(gpuDesc)) {
                 return 'simple-m'; // Medium CNN 2x (fast 60fps for Intel UHD 730 and other iGPUs)
             }
-            return 'mode-a'; // HigherEnd Mode A (HQ 7-Pass for dGPUs)
+            return (this._config && this._config.Anime4KPreset) || 'mode-a';
         },
 
         _initAnime4K: function() {
@@ -1474,6 +1475,14 @@
                         out += "Server Latency: " + Math.round(st.benchmark.pingMs || 0) + " ms\n";
                         out += "Video Frame : " + (video ? video.videoWidth + "x" + video.videoHeight : "?") + "\n";
                         out += "Target Scale: " + (st.benchmark.serverScale || cfg.ScaleFactor || 2) + "x\n";
+                    }
+                    if (video && typeof video.getVideoPlaybackQuality === 'function') {
+                        var q = video.getVideoPlaybackQuality();
+                        out += "Dropped Frames: " + q.droppedVideoFrames + " / " + q.totalVideoFrames;
+                        if (q.totalVideoFrames > 0) {
+                            out += " (" + (q.droppedVideoFrames / q.totalVideoFrames * 100).toFixed(1) + "%)";
+                        }
+                        out += "\n";
                     }
                     if (st.reason) out += "Notice: " + st.reason + "\n";
                     if (st.mode === 'anime4k') {

@@ -338,14 +338,26 @@
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         },
         
+        _scheduleNextFrame: function() {
+            if (!this.enabled) return;
+            const video = this.videoElement;
+            if (video && typeof video.requestVideoFrameCallback === 'function') {
+                this._usingRvfc = true;
+                this.animationFrameId = video.requestVideoFrameCallback(() => this.render());
+            } else {
+                this._usingRvfc = false;
+                this.animationFrameId = requestAnimationFrame(() => this.render());
+            }
+        },
+
         // Render frame
         render: function() {
             if (!this.enabled || !this.gl || this.gl.isContextLost()) {
                 return;
             }
 
-            // Always reschedule next frame FIRST so buffering or loading never kills the loop
-            this.animationFrameId = requestAnimationFrame(() => this.render());
+            // Always reschedule next frame FIRST synced with video frame presentation
+            this._scheduleNextFrame();
 
             const video = this.videoElement;
             if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0 || video.paused || video.ended) {
@@ -358,16 +370,22 @@
 
             const gl = this.gl;
             
-            // Ensure canvas exactly matches native aspect ratio, upscaled by 2x for pristine sharpness
+            // Adaptive target: scale up to 2x integer or match the screen display resolution
+            // Prevents rendering 4K (8.3M pixels) on a 1080p office screen which overwhelms integrated GPUs
             var targetW, targetH;
             if (this._explicitWidth && this._explicitHeight) {
                 targetW = this._explicitWidth;
                 targetH = this._explicitHeight;
             } else {
-                // Clean 2x integer scaling for SD/720p/1080p content; 1x passthrough if source is already 4K+
+                var dpr = window.devicePixelRatio || 1;
+                var displayW = Math.round((this.canvas.clientWidth || window.innerWidth || video.videoWidth) * dpr);
+                var displayH = Math.round((this.canvas.clientHeight || window.innerHeight || video.videoHeight) * dpr);
+                var maxW = Math.max(video.videoWidth, displayW);
+                var maxH = Math.max(video.videoHeight, displayH);
+
                 var scale = (video.videoHeight >= 2160) ? 1.0 : 2.0;
-                targetW = video.videoWidth * scale;
-                targetH = video.videoHeight * scale;
+                targetW = Math.min(video.videoWidth * scale, maxW);
+                targetH = Math.min(video.videoHeight * scale, maxH);
             }
             
             if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
@@ -473,7 +491,11 @@
             }
             
             if (this.animationFrameId) {
-                cancelAnimationFrame(this.animationFrameId);
+                if (this._usingRvfc && this.videoElement && typeof this.videoElement.cancelVideoFrameCallback === 'function') {
+                    try { this.videoElement.cancelVideoFrameCallback(this.animationFrameId); } catch (e) {}
+                } else {
+                    cancelAnimationFrame(this.animationFrameId);
+                }
                 this.animationFrameId = null;
             }
             
