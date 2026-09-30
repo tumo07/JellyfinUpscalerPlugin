@@ -7,7 +7,7 @@
 
     // Plugin configuration
     const PLUGIN_ID = 'f87f700e-679d-43e6-9c7c-b3a410dc3f22';
-    const PLUGIN_VERSION = '1.8.3.54';
+    const PLUGIN_VERSION = '1.8.3.56';
 
     // Prevent double-init
     if (window._aiUpscalerLoaded) return;
@@ -478,6 +478,15 @@
             if (preset === 'mode-b' && ns.ANIME4K_HIGHEREND_MODE_B) {
                 profile = ns.ANIME4K_HIGHEREND_MODE_B;
                 profileLabel = 'HigherEnd Mode B (Soft Lines)';
+            } else if ((preset === 'mode-ca-igpu' || preset === 'mode-ca') && ns.ANIME4KJS_MODE_CA_2X) {
+                profile = ns.ANIME4KJS_MODE_CA_2X;
+                profileLabel = 'Mode C+A (Heavy Artifact + Thin Line)';
+            } else if ((preset === 'cartoon-pop' || preset === 'line-darken-thin') && ns.ANIME4KJS_CARTOON_POP_2X) {
+                profile = ns.ANIME4KJS_CARTOON_POP_2X;
+                profileLabel = 'Cartoon Pop (Darken & Thin Contours)';
+            } else if ((preset === 'bilateral-denoise' || preset === 'mode-c-bilateral') && ns.ANIME4KJS_BILATERAL_DENOISE_2X) {
+                profile = ns.ANIME4KJS_BILATERAL_DENOISE_2X;
+                profileLabel = 'Bilateral Denoise (Clean Color Fills)';
             } else if ((preset === 'mode-c-igpu' || preset === 'mode-c-fast' || preset === 'simple-denoise-m') && (ns.ANIME4KJS_SIMPLE_DENOISE_M_2X || ns.ANIME4K_LOWEREND_MODE_C)) {
                 profile = ns.ANIME4KJS_SIMPLE_DENOISE_M_2X || ns.ANIME4K_LOWEREND_MODE_C;
                 profileLabel = 'Mode C Denoise (UHD 730 / Archive)';
@@ -1522,6 +1531,10 @@
                     if (st.mode === 'anime4k') {
                         out += "Anime4K Pipeline: " + (RealtimeUpscaler._anime4kProfileName || "HigherEnd Mode A (HQ 7-Pass)") + "\n";
                     }
+                    if (st.mode === 'lanczos' || st.mode === 'webgl') {
+                        var lSharp = parseFloat(localStorage.getItem('ai_upscaler_lanczos_sharpness')) || 0.75;
+                        out += "Lanczos Sharpness: " + Math.round(lSharp * 100) + "%\n";
+                    }
                     
                     if (st.mode === 'server') {
                         out += "\n=== SERVER STATUS ===\n";
@@ -1802,6 +1815,8 @@
             }
             var activeA4kPreset = RealtimeUpscaler._getAnime4KPreset ? RealtimeUpscaler._getAnime4KPreset() : (localStorage.getItem('ai_upscaler_anime4k_preset') || 'mode-a');
             var isA4kActive = (RealtimeUpscaler._mode === 'anime4k' || (this._cachedConfig && this._cachedConfig.RealtimeMode === 'anime4k'));
+            var activeLanczosSharpness = parseFloat(localStorage.getItem('ai_upscaler_lanczos_sharpness')) || 0.75;
+            var isLanczosActive = (RealtimeUpscaler._mode === 'lanczos' || RealtimeUpscaler._mode === 'webgl' || (this._cachedConfig && (this._cachedConfig.RealtimeMode === 'lanczos' || this._cachedConfig.RealtimeMode === 'webgl')));
             this._fpsHistory = [];
 
             menu.innerHTML =
@@ -1887,14 +1902,26 @@
                             '<ul class="ai-menu__engines">' + enginesHtml + '</ul>' +
                         '</div>' +
                         '<div class="ai-menu__section" id="aiAnime4kPresetsSection" style="' + (isA4kActive ? '' : 'display:none;') + '">' +
-                            '<div class="ai-menu__section-title"><span>Anime4K Model Pipeline</span><span class="ai-menu__section-sub">tuned for dGPU vs iGPU</span></div>' +
+                            '<div class="ai-menu__section-title"><span>Anime4K Pipeline Options</span><span class="ai-menu__section-sub">tuned for archives & iGPU</span></div>' +
                             '<div class="ai-menu__chips" role="group" aria-label="Anime4K Preset">' +
-                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-c-igpu' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-c-igpu">Mode C Archive / Denoise (UHD 730)</button>' +
-                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-c' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-c">Mode C HQ (Denoise dGPU)</button>' +
-                                '<button class="ai-menu__chip' + (activeA4kPreset === 'simple-m' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="simple-m">Medium CNN (Clean UHD 730)</button>' +
-                                '<button class="ai-menu__chip' + (activeA4kPreset === 'simple-l' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="simple-l">Large CNN (Balanced)</button>' +
-                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-a' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-a">Mode A (Clean 1080p)</button>' +
-                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-b' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-b">Mode B (Soft Lines)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-c-igpu' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-c-igpu" title="3-Pass Denoise + Restore for 480p SD on UHD 730">Mode C Denoise (UHD 730)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-ca-igpu' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-ca-igpu" title="Heavy Artifact Cleanup + Line Thinning">Mode C+A (Heavy Artifacts)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'cartoon-pop' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="cartoon-pop" title="Darken & thin cartoon lineart">Cartoon Pop (Deep Contours)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'bilateral-denoise' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="bilateral-denoise" title="Bilateral filter to smooth compression blocks">Bilateral Denoise</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'simple-m' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="simple-m" title="Fast 2x for clean HD anime">Medium CNN (Clean UHD 730)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'simple-l' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="simple-l" title="Higher precision for clean sources">Large CNN (Balanced)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-a' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-a" title="7-pass line reconstruction">Mode A (Clean 1080p HQ)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-b' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-b" title="Deblur soft-focus / blurry anime">Mode B (Soft Lines)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-c' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-c" title="Full 7-pass denoise (requires dGPU)">Mode C HQ (dGPU)</button>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="ai-menu__section" id="aiLanczosSettingsSection" style="' + (isLanczosActive ? '' : 'display:none;') + '">' +
+                            '<div class="ai-menu__section-title"><span>Lanczos-3 Sharpness</span><span class="ai-menu__section-sub">contrast-adaptive edge boost</span></div>' +
+                            '<div class="ai-menu__chips" role="group" aria-label="Lanczos Sharpness">' +
+                                '<button class="ai-menu__chip' + (activeLanczosSharpness === 0.35 ? ' ai-menu__chip--active' : '') + '" data-lanczos-sharp="0.35">Mild (35%)</button>' +
+                                '<button class="ai-menu__chip' + (activeLanczosSharpness === 0.50 ? ' ai-menu__chip--active' : '') + '" data-lanczos-sharp="0.50">Standard (50%)</button>' +
+                                '<button class="ai-menu__chip' + (activeLanczosSharpness === 0.75 ? ' ai-menu__chip--active' : '') + '" data-lanczos-sharp="0.75">High Acuity (75%)</button>' +
+                                '<button class="ai-menu__chip' + (activeLanczosSharpness === 1.00 ? ' ai-menu__chip--active' : '') + '" data-lanczos-sharp="1.00">Ultra Crisp (100%)</button>' +
                             '</div>' +
                         '</div>' +
                     '</div>' +
@@ -1998,6 +2025,8 @@
                     if (newMode === 'lanczos') newMode = 'webgl';
                     var a4kSec = menu.querySelector('#aiAnime4kPresetsSection');
                     if (a4kSec) a4kSec.style.display = (newMode === 'anime4k') ? '' : 'none';
+                    var lanczosSec = menu.querySelector('#aiLanczosSettingsSection');
+                    if (lanczosSec) lanczosSec.style.display = (newMode === 'webgl' || newMode === 'lanczos') ? '' : 'none';
                     if (RealtimeUpscaler._mode !== newMode) {
                         PlayerIntegration.updatePluginConfig({ RealtimeMode: newMode }).then(function() {
                             if (RealtimeUpscaler._active) {
@@ -2019,6 +2048,20 @@
                             switchBtn.textContent = newMode === 'server' ? 'Switch to Lanczos' : 'Switch to Server AI';
                         }
                     }
+                    return;
+                }
+                var lanczosBtn = e.target.closest('[data-lanczos-sharp]');
+                if (lanczosBtn) {
+                    var val = parseFloat(lanczosBtn.getAttribute('data-lanczos-sharp')) || 0.75;
+                    localStorage.setItem('ai_upscaler_lanczos_sharpness', String(val));
+                    var allLanczosBtns = menu.querySelectorAll('[data-lanczos-sharp]');
+                    for (var lb = 0; lb < allLanczosBtns.length; lb++) {
+                        allLanczosBtns[lb].classList.toggle('ai-menu__chip--active', parseFloat(allLanczosBtns[lb].getAttribute('data-lanczos-sharp')) === val);
+                    }
+                    if (window.AIUpscalerWebGL) {
+                        window.AIUpscalerWebGL.setSharpness(val);
+                    }
+                    PlayerIntegration.showPlayerNotification('Lanczos sharpness: ' + lanczosBtn.textContent, 'info');
                     return;
                 }
                 var a4kBtn = e.target.closest('[data-a4k-preset]');

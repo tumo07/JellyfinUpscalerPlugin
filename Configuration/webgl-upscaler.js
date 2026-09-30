@@ -379,37 +379,19 @@
             // Adaptive target: scale up to 2x integer or match the screen display resolution
             // Strictly preserve the video's intrinsic aspect ratio to prevent distortion (e.g. 4:3 stretching)
             var targetW, targetH;
-            var videoRatio = video.videoWidth / video.videoHeight;
             if (this._explicitWidth && this._explicitHeight) {
                 targetW = this._explicitWidth;
                 targetH = this._explicitHeight;
             } else {
-                var dpr = window.devicePixelRatio || 1;
-                // Use the video element's layout dimensions or container/window bounds
-                var layoutW = (video.clientWidth || this.canvas.clientWidth || window.innerWidth || video.videoWidth);
-                var layoutH = (video.clientHeight || this.canvas.clientHeight || window.innerHeight || video.videoHeight);
-                var maxW = Math.max(video.videoWidth, Math.round(layoutW * dpr));
-                var maxH = Math.max(video.videoHeight, Math.round(layoutH * dpr));
-
-                var scale = (video.videoHeight >= 2160) ? 1.0 : 2.0;
+                // Integer 2x scale for SD and HD; 1x passthrough for 1440p/4K to maintain high fps on iGPU
+                var scale = (video.videoHeight >= 1440) ? 1.0 : 2.0;
                 targetW = Math.round(video.videoWidth * scale);
                 targetH = Math.round(video.videoHeight * scale);
-
-                // Proportional clamp: NEVER clamp W and H independently!
-                // Both dimensions scale together so targetW / targetH strictly equals videoRatio!
-                if (targetW > maxW) {
-                    targetW = maxW;
-                    targetH = Math.round(maxW / videoRatio);
-                }
-                if (targetH > maxH) {
-                    targetH = maxH;
-                    targetW = Math.round(maxH * videoRatio);
-                }
             }
             
             // Ensure even pixel dimensions
-            targetW = Math.max(2, (Math.round(targetW) & ~1));
-            targetH = Math.max(2, (Math.round(targetH) & ~1));
+            targetW = Math.max(2, (targetW & ~1));
+            targetH = Math.max(2, (targetH & ~1));
 
             if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
                 this.canvas.width = targetW;
