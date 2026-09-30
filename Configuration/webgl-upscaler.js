@@ -10,6 +10,7 @@
         canvas: null,
         gl: null,
         program: null,
+        texture: null,
         videoElement: null,
         animationFrameId: null,
         sharpness: 0.5,
@@ -20,9 +21,12 @@
         _explicitHeight: 0,
         _texWidth: 0,
         _texHeight: 0,
+        _hasRenderedFrame: false,
         _vertexShader: null,
         _fragmentShader: null,
         _uniformLocations: null,
+        _positionBuffer: null,
+        _texCoordBuffer: null,
         
         // Shader sources
         vertexShaderSource: `
@@ -50,8 +54,8 @@
 
             // Normalized sinc function: sinc(x) = sin(pi * x) / (pi * x), with sinc(0) = 1
             float sinc(float x) {
-                if (abs(x) < 1e-4) return 1.0;
                 float px = PI * x;
+                if (abs(px) < 1e-4) return 1.0;
                 return sin(px) / px;
             }
 
@@ -98,7 +102,7 @@
                     }
                 }
 
-                vec3 res = color / max(totalWeight, 1e-5);
+                vec3 res = (totalWeight > 1e-4) ? (color / totalWeight) : c00;
                 // Soft anti-ringing: clamp excessive ringing while preserving natural edge sharpness
                 vec3 clamped = clamp(res, minQuad, maxQuad);
                 return mix(clamped, clamp(res, 0.0, 1.0), 0.35);
@@ -126,6 +130,10 @@
             }
 
             void main() {
+                if (u_resolution.x < 1.0 || u_resolution.y < 1.0) {
+                    gl_FragColor = texture2D(u_texture, v_texCoord);
+                    return;
+                }
                 vec2 srcTexelSize = 1.0 / u_resolution;
                 vec3 color = lanczos3Resample(v_texCoord, srcTexelSize);
 
@@ -133,7 +141,7 @@
                     color = casSharpening(v_texCoord, color, srcTexelSize, u_sharpness);
                 }
 
-                gl_FragColor = vec4(color, 1.0);
+                gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
             }
         `,
         
@@ -143,6 +151,9 @@
                 console.log('AI Upscaler: Initializing WebGL upscaler...');
                 
                 this.videoElement = videoElement;
+                this._texWidth = 0;
+                this._texHeight = 0;
+                this._hasRenderedFrame = false;
                 
                 // Create canvas overlay
                 this.canvas = document.createElement('canvas');
@@ -156,8 +167,19 @@
                 this.canvas.style.pointerEvents = 'none';
                 this.canvas.style.zIndex = '999';
                 
-                // Get WebGL context
-                this.gl = this.canvas.getContext('webgl2') || this.canvas.getContext('webgl');
+                // Get WebGL context with optimal video playback flags (alpha: false avoids compositor blackhole)
+                var ctxAttribs = {
+                    alpha: false,
+                    depth: false,
+                    stencil: false,
+                    antialias: false,
+                    premultipliedAlpha: false,
+                    preserveDrawingBuffer: false,
+                    powerPreference: 'high-performance'
+                };
+                this.gl = this.canvas.getContext('webgl2', ctxAttribs) || 
+                          this.canvas.getContext('webgl', ctxAttribs) ||
+                          this.canvas.getContext('experimental-webgl', ctxAttribs);
                 
                 if (!this.gl) {
                     console.error('AI Upscaler: WebGL not supported');
@@ -189,14 +211,23 @@
 
                 this.canvas.addEventListener('webglcontextrestored', function() {
                     console.log('AI Upscaler: WebGL context restored, reinitializing...');
-                    WebGLUpscaler.gl = WebGLUpscaler.canvas.getContext('webgl2') || WebGLUpscaler.canvas.getContext('webgl');
+                    var rAttribs = {
+                        alpha: false,
+                        depth: false,
+                        stencil: false,
+                        antialias: false,
+                        premultipliedAlpha: false,
+                        preserveDrawingBuffer: false,
+                        powerPreference: 'high-performance'
+                    };
+                    WebGLUpscaler.gl = WebGLUpscaler.canvas.getContext('webgl2', rAttribs) || 
+                                       WebGLUpscaler.canvas.getContext('webgl', rAttribs) ||
+                                       WebGLUpscaler.canvas.getContext('experimental-webgl', rAttribs);
                     if (WebGLUpscaler.gl && WebGLUpscaler.compileShaders()) {
                         WebGLUpscaler.setupGeometry();
-                        WebGLUpscaler.texture = WebGLUpscaler.gl.createTexture();
-                        WebGLUpscaler.gl.bindTexture(WebGLUpscaler.gl.TEXTURE_2D, WebGLUpscaler.texture);
-                        WebGLUpscaler.gl.texParameteri(WebGLUpscaler.gl.TEXTURE_2D, WebGLUpscaler.gl.TEXTURE_WRAP_S, WebGLUpscaler.gl.CLAMP_TO_EDGE);
-                        WebGLUpscaler.gl.texParameteri(WebGLUpscaler.gl.TEXTURE_2D, WebGLUpscaler.gl.TEXTURE_WRAP_T, WebGLUpscaler.gl.CLAMP_TO_EDGE);
-                        WebGLUpscaler.gl.texParameteri(WebGLUpscaler.gl.TEXTURE_2D, WebGLUpscaler.gl.TEXTURE_MIN_FILTER, WebGLUpscaler.gl.LINEAR);
+                        WebGLUpscaler._texWidth = 0;
+                        WebGLUpscaler._texHeight = 0;
+                        WebGLUpscaler._hasRenderedFrame = false;
                         console.log('AI Upscaler: WebGL context restored successfully');
                     }
                 }, false);
@@ -248,7 +279,8 @@
             // Cache uniform locations once (avoids per-frame GPU roundtrips)
             this._uniformLocations = {
                 resolution: gl.getUniformLocation(this.program, 'u_resolution'),
-                sharpness: gl.getUniformLocation(this.program, 'u_sharpness')
+                sharpness: gl.getUniformLocation(this.program, 'u_sharpness'),
+                texture: gl.getUniformLocation(this.program, 'u_texture')
             };
 
             return true;
@@ -297,6 +329,8 @@
 
             // Create texture
             this.texture = gl.createTexture();
+            this._texWidth = 0;
+            this._texHeight = 0;
             gl.bindTexture(gl.TEXTURE_2D, this.texture);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -314,7 +348,11 @@
             this.animationFrameId = requestAnimationFrame(() => this.render());
 
             const video = this.videoElement;
-            if (!video || video.videoWidth === 0 || video.videoHeight === 0 || video.paused || video.ended) {
+            if (!video || video.readyState < 2 || video.videoWidth === 0 || video.videoHeight === 0 || video.paused || video.ended) {
+                // If video is buffering or stopped, ensure native video is visible
+                if (!this._hasRenderedFrame && video && video.style.opacity === '0') {
+                    video.style.opacity = '1';
+                }
                 return;
             }
 
@@ -348,28 +386,46 @@
             if (this.canvas.style.height !== '100%') this.canvas.style.height = '100%';
             if (this.canvas.style.position !== 'absolute') this.canvas.style.position = 'absolute';
             
-            // Fast texture upload: avoid reallocating texture storage every frame
+            // Explicitly bind Texture Unit 0
+            gl.activeTexture(gl.TEXTURE0);
             gl.bindTexture(gl.TEXTURE_2D, this.texture);
-            if (this._texWidth !== video.videoWidth || this._texHeight !== video.videoHeight) {
+            
+            // Fast texture upload using RGBA (crucial for Intel UHD / D3D11 / ANGLE hardware video decoding)
+            try {
+                if (this._texWidth !== video.videoWidth || this._texHeight !== video.videoHeight) {
+                    this._texWidth = video.videoWidth;
+                    this._texHeight = video.videoHeight;
+                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+                } else {
+                    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, video);
+                }
+            } catch (uploadErr) {
+                // If sub-image fails due to driver state or dimension mismatch, allocate fresh texture storage
                 this._texWidth = video.videoWidth;
                 this._texHeight = video.videoHeight;
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, gl.RGB, gl.UNSIGNED_BYTE, video);
-            } else {
-                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGB, gl.UNSIGNED_BYTE, video);
+                try {
+                    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+                } catch (allocErr) {
+                    return; // Wait for next frame
+                }
             }
             
             // Use shader program
             gl.useProgram(this.program);
             
             // Set uniforms (using cached locations)
-            // u_resolution must be SOURCE (video) size for Lanczos kernel to sample correctly
+            if (this._uniformLocations.texture) {
+                gl.uniform1i(this._uniformLocations.texture, 0);
+            }
             gl.uniform2f(this._uniformLocations.resolution, video.videoWidth, video.videoHeight);
             gl.uniform1f(this._uniformLocations.sharpness, this.sharpness);
 
             // Draw
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-            // Ensure native video is hidden while upscaled canvas is actively drawing
+            this._hasRenderedFrame = true;
+
+            // Ensure native video is hidden only once upscaled canvas is actively drawing
             if (video.style.opacity !== '0') {
                 video.style.opacity = '0';
             }
@@ -406,6 +462,7 @@
         // Disable upscaling
         disable: function() {
             this.enabled = false;
+            this._hasRenderedFrame = false;
             
             if (this.canvas) {
                 this.canvas.style.display = 'none';
@@ -451,29 +508,29 @@
                 this.canvas.parentElement.removeChild(this.canvas);
             }
             
-            if (this._positionBuffer) this.gl.deleteBuffer(this._positionBuffer);
-            if (this._texCoordBuffer) this.gl.deleteBuffer(this._texCoordBuffer);
-
-            if (this.gl && this.texture) {
-                this.gl.deleteTexture(this.texture);
-            }
-            
-            if (this.gl && this._vertexShader) {
-                this.gl.deleteShader(this._vertexShader);
-            }
-            if (this.gl && this._fragmentShader) {
-                this.gl.deleteShader(this._fragmentShader);
-            }
-            if (this.gl && this.program) {
-                this.gl.deleteProgram(this.program);
+            if (this.gl) {
+                if (this._positionBuffer) this.gl.deleteBuffer(this._positionBuffer);
+                if (this._texCoordBuffer) this.gl.deleteBuffer(this._texCoordBuffer);
+                if (this.texture) this.gl.deleteTexture(this.texture);
+                if (this._vertexShader) this.gl.deleteShader(this._vertexShader);
+                if (this._fragmentShader) this.gl.deleteShader(this._fragmentShader);
+                if (this.program) this.gl.deleteProgram(this.program);
             }
 
             this.canvas = null;
             this.gl = null;
             this.program = null;
+            this.texture = null;
+            this._positionBuffer = null;
+            this._texCoordBuffer = null;
             this._vertexShader = null;
             this._fragmentShader = null;
             this.videoElement = null;
+            this._texWidth = 0;
+            this._texHeight = 0;
+            this._explicitWidth = 0;
+            this._explicitHeight = 0;
+            this._hasRenderedFrame = false;
         }
     };
     
@@ -482,5 +539,3 @@
     
     console.log('AI Upscaler: WebGL shader module loaded');
 })();
-
-

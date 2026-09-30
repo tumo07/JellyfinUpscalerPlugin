@@ -8,6 +8,7 @@ import {
   Anime4K_Restore_CNN_L,
   Anime4K_Restore_CNN_VL,
   Anime4K_Restore_CNN_UL,
+  Anime4K_Restore_CNN_Soft_S,
   Anime4K_Restore_CNN_Soft_M,
   Anime4K_Restore_CNN_Soft_VL,
   Anime4K_Upscale_CNN_x2_S,
@@ -15,6 +16,8 @@ import {
   Anime4K_Upscale_CNN_x2_L,
   Anime4K_Upscale_CNN_x2_VL,
   Anime4K_Upscale_CNN_x2_UL,
+  Anime4K_Upscale_Denoise_CNN_x2_S,
+  Anime4K_Upscale_Denoise_CNN_x2_M,
   Anime4K_Upscale_Denoise_CNN_x2_VL,
   Anime4K_AutoDownscalePre_x2,
   Anime4K_AutoDownscalePre_x4,
@@ -27,6 +30,10 @@ import {
   ANIME4K_HIGHEREND_MODE_B,
   ANIME4K_HIGHEREND_MODE_C,
   ANIME4K_HIGHEREND_MODE_A_FAST,
+  ANIME4K_LOWEREND_MODE_A,
+  ANIME4K_LOWEREND_MODE_A_FAST,
+  ANIME4K_LOWEREND_MODE_B,
+  ANIME4K_LOWEREND_MODE_C,
 } from "anime4k.js";
 
 export {
@@ -42,4 +49,8 @@ export {
   ANIME4K_HIGHEREND_MODE_B,
   ANIME4K_HIGHEREND_MODE_C,
   ANIME4K_HIGHEREND_MODE_A_FAST,
+  ANIME4K_LOWEREND_MODE_A,
+  ANIME4K_LOWEREND_MODE_A_FAST,
+  ANIME4K_LOWEREND_MODE_B,
+  ANIME4K_LOWEREND_MODE_C,
 };

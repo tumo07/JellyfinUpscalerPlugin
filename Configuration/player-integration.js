@@ -7,7 +7,7 @@
 
     // Plugin configuration
     const PLUGIN_ID = 'f87f700e-679d-43e6-9c7c-b3a410dc3f22';
-    const PLUGIN_VERSION = '1.8.3.52';
+    const PLUGIN_VERSION = '1.8.3.53';
 
     // Prevent double-init
     if (window._aiUpscalerLoaded) return;
@@ -412,6 +412,24 @@
             document.head.appendChild(script);
         },
 
+        _getAnime4KPreset: function() {
+            var userPreset = (this._config && this._config.Anime4KPreset) || localStorage.getItem('ai_upscaler_anime4k_preset');
+            if (userPreset) return userPreset;
+            var gpuDesc = '';
+            try {
+                var testCanvas = document.createElement('canvas');
+                var gl = testCanvas.getContext('webgl');
+                if (gl) {
+                    var ext = gl.getExtension('WEBGL_debug_renderer_info');
+                    if (ext) gpuDesc = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '';
+                }
+            } catch (e) { /* best effort */ }
+            if (/intel|uhd|hd graphics|iris|radeon vega/i.test(gpuDesc)) {
+                return 'simple-m'; // Medium CNN 2x (fast 60fps for Intel UHD 730 and other iGPUs)
+            }
+            return 'mode-a'; // HigherEnd Mode A (HQ 7-Pass for dGPUs)
+        },
+
         _initAnime4K: function() {
             if (!this._videoElement || !this._active || this._mode !== 'anime4k') return;
             var ns = window.Anime4KJS;
@@ -429,7 +447,7 @@
                 }
             } catch (e) { this._fallbackToLanczos(); return; }
             // Select high-fidelity Anime4K 4.0.1 model pipeline
-            var preset = (this._config && this._config.Anime4KPreset) || localStorage.getItem('ai_upscaler_anime4k_preset') || 'mode-a';
+            var preset = this._getAnime4KPreset();
             var profile = null;
             var profileLabel = 'HigherEnd Mode A (HQ 7-Pass)';
 
@@ -439,21 +457,33 @@
             } else if (preset === 'mode-c' && ns.ANIME4K_HIGHEREND_MODE_C) {
                 profile = ns.ANIME4K_HIGHEREND_MODE_C;
                 profileLabel = 'HigherEnd Mode C (Denoise)';
+            } else if (preset === 'mode-a-igpu' && ns.ANIME4K_LOWEREND_MODE_A) {
+                profile = ns.ANIME4K_LOWEREND_MODE_A;
+                profileLabel = 'Mode A Balanced (iGPU 7-Pass)';
+            } else if (preset === 'simple-m' && ns.ANIME4KJS_SIMPLE_M_2X) {
+                profile = ns.ANIME4KJS_SIMPLE_M_2X;
+                profileLabel = 'Medium CNN 2x (UHD 730/Fast)';
+            } else if (preset === 'simple-l' && ns.ANIME4KJS_SIMPLE_L_2X) {
+                profile = ns.ANIME4KJS_SIMPLE_L_2X;
+                profileLabel = 'Large CNN 2x (Balanced)';
             } else if (preset === 'simple-ul' && ns.ANIME4KJS_SIMPLE_UL_2X) {
                 profile = ns.ANIME4KJS_SIMPLE_UL_2X;
                 profileLabel = 'Simple UL 2x (Ultra Large CNN)';
             } else if (preset === 'simple-vl' && ns.ANIME4KJS_SIMPLE_VL_2X) {
                 profile = ns.ANIME4KJS_SIMPLE_VL_2X;
                 profileLabel = 'Simple VL 2x (Very Large CNN)';
+            } else if (preset === 'mode-a' && ns.ANIME4K_HIGHEREND_MODE_A) {
+                profile = ns.ANIME4K_HIGHEREND_MODE_A;
+                profileLabel = 'HigherEnd Mode A (HQ 7-Pass)';
             } else if (ns.ANIME4K_HIGHEREND_MODE_A) {
                 profile = ns.ANIME4K_HIGHEREND_MODE_A;
                 profileLabel = 'HigherEnd Mode A (HQ 7-Pass)';
-            } else if (ns.ANIME4KJS_SIMPLE_UL_2X) {
-                profile = ns.ANIME4KJS_SIMPLE_UL_2X;
-                profileLabel = 'Simple UL 2x (Ultra Large CNN)';
+            } else if (ns.ANIME4KJS_SIMPLE_M_2X) {
+                profile = ns.ANIME4KJS_SIMPLE_M_2X;
+                profileLabel = 'Medium CNN 2x (UHD 730/Fast)';
             } else {
                 profile = ns.ANIME4KJS_SIMPLE_VL_2X || ns.ANIME4KJS_SIMPLE_M_2X || ns.ANIME4KJS_SIMPLE_S_2X;
-                profileLabel = 'Simple VL 2x';
+                profileLabel = 'Simple 2x';
             }
 
             if (!profile) {
@@ -1718,7 +1748,7 @@
             var engines = [
                 ['server', 'Server AI', 'Hardware GPU OpenCL Lanczos4 + Adaptive Sharpening on server. Real-time 60+ FPS.'],
                 ['lanczos', 'WebGL (Lanczos3)', '36-tap Lanczos3 + CAS sharpening in browser. Pristine sub-pixel lines, 144+ FPS.'],
-                ['anime4k', 'Anime4K v4.0.1', 'HigherEnd Mode A (7-pass VL) & Ultra-Large CNN shaders for anime. 60-120 FPS.'],
+                ['anime4k', 'Anime4K v4.0.1', 'Mode A HQ, iGPU/UHD 730 presets, and CNN shaders for anime. 60-120 FPS.'],
                 ['ai-webgpu', 'WebGPU AI', 'Real-ESRGAN Compact neural model in browser via WebGPU compute.']
             ];
             var enginesHtml = '';
@@ -1727,7 +1757,7 @@
                     '<span class="ai-menu__engine-name">' + engines[ei][1] + '</span>' +
                     '<span class="ai-menu__engine-desc">' + engines[ei][2] + '</span></li>';
             }
-            var activeA4kPreset = localStorage.getItem('ai_upscaler_anime4k_preset') || 'mode-a';
+            var activeA4kPreset = RealtimeUpscaler._getAnime4KPreset ? RealtimeUpscaler._getAnime4KPreset() : (localStorage.getItem('ai_upscaler_anime4k_preset') || 'mode-a');
             var isA4kActive = (RealtimeUpscaler._mode === 'anime4k' || (this._cachedConfig && this._cachedConfig.RealtimeMode === 'anime4k'));
             this._fpsHistory = [];
 
@@ -1814,9 +1844,12 @@
                             '<ul class="ai-menu__engines">' + enginesHtml + '</ul>' +
                         '</div>' +
                         '<div class="ai-menu__section" id="aiAnime4kPresetsSection" style="' + (isA4kActive ? '' : 'display:none;') + '">' +
-                            '<div class="ai-menu__section-title"><span>Anime4K Model Pipeline</span><span class="ai-menu__section-sub">high-fidelity shader models</span></div>' +
+                            '<div class="ai-menu__section-title"><span>Anime4K Model Pipeline</span><span class="ai-menu__section-sub">tuned for dGPU vs iGPU</span></div>' +
                             '<div class="ai-menu__chips" role="group" aria-label="Anime4K Preset">' +
                                 '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-a' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-a">Mode A (HQ 7-Pass)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-a-igpu' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-a-igpu">Mode A (iGPU 7-Pass)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'simple-m' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="simple-m">Medium CNN (UHD 730)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'simple-l' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="simple-l">Large CNN (Balanced)</button>' +
                                 '<button class="ai-menu__chip' + (activeA4kPreset === 'simple-ul' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="simple-ul">Ultra-Large CNN</button>' +
                                 '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-c' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-c">Mode C (Denoise)</button>' +
                                 '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-b' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-b">Mode B (Soft)</button>' +

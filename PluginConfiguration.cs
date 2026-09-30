@@ -207,6 +207,9 @@ namespace JellyfinUpscalerPlugin
         /// <summary>Real-time mode: "auto", "webgl" (client-side), or "server" (AI service).</summary>
         public string RealtimeMode { get; set; } = "auto";
 
+        /// <summary>Default preset for Anime4K realtime upscaling: "mode-a", "mode-a-igpu", "simple-m", "simple-l", "simple-ul", "mode-b", "mode-c".</summary>
+        public string Anime4KPreset { get; set; } = "mode-a";
+
         /// <summary>Disable plugin upscaling when the playback device already upscales in its driver.</summary>
         public bool ClientDriverUpscalingActive { get; set; } = false;
 
