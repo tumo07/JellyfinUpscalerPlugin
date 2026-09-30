@@ -425,8 +425,18 @@
                     if (ext) gpuDesc = gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '';
                 }
             } catch (e) { /* best effort */ }
-            if (/intel|uhd|hd graphics|iris|radeon vega/i.test(gpuDesc)) {
-                return 'simple-m'; // Medium CNN 2x (fast 60fps for Intel UHD 730 and other iGPUs)
+            var isIGpu = /intel|uhd|hd graphics|iris|radeon vega/i.test(gpuDesc);
+
+            // Auto-detect older archives / SD video (<= 576p, e.g. 480p DVD/compressed archive)
+            var video = this._videoElement || (window.PlayerIntegration && PlayerIntegration.findVideoElement());
+            var isSdArchive = video && video.videoHeight > 0 && video.videoHeight <= 576;
+            if (isSdArchive) {
+                // Older archives have compression artifacts, ringing, and macroblocks.
+                // Mode C is specifically designed to denoise & de-artifact older compressed video!
+                return isIGpu ? 'mode-c-igpu' : 'mode-c';
+            }
+            if (isIGpu) {
+                return 'simple-m'; // Medium CNN 2x (fast 60fps for Intel UHD 730 on clean HD)
             }
             return (this._config && this._config.Anime4KPreset) || 'mode-a';
         },
@@ -452,18 +462,39 @@
             var profile = null;
             var profileLabel = 'HigherEnd Mode A (HQ 7-Pass)';
 
+            var isIGpu = false;
+            try {
+                var testCanvas = document.createElement('canvas');
+                var tgl = testCanvas.getContext('webgl');
+                if (tgl) {
+                    var ext = tgl.getExtension('WEBGL_debug_renderer_info');
+                    if (ext) {
+                        var gDesc = tgl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '';
+                        isIGpu = /intel|uhd|hd graphics|iris|radeon vega/i.test(gDesc);
+                    }
+                }
+            } catch (e) {}
+
             if (preset === 'mode-b' && ns.ANIME4K_HIGHEREND_MODE_B) {
                 profile = ns.ANIME4K_HIGHEREND_MODE_B;
                 profileLabel = 'HigherEnd Mode B (Soft Lines)';
-            } else if (preset === 'mode-c' && ns.ANIME4K_HIGHEREND_MODE_C) {
-                profile = ns.ANIME4K_HIGHEREND_MODE_C;
-                profileLabel = 'HigherEnd Mode C (Denoise)';
+            } else if ((preset === 'mode-c-igpu' || preset === 'mode-c-fast' || preset === 'simple-denoise-m') && (ns.ANIME4KJS_SIMPLE_DENOISE_M_2X || ns.ANIME4K_LOWEREND_MODE_C)) {
+                profile = ns.ANIME4KJS_SIMPLE_DENOISE_M_2X || ns.ANIME4K_LOWEREND_MODE_C;
+                profileLabel = 'Mode C Denoise (UHD 730 / Archive)';
+            } else if (preset === 'mode-c') {
+                if (isIGpu && (ns.ANIME4KJS_SIMPLE_DENOISE_M_2X || ns.ANIME4K_LOWEREND_MODE_C)) {
+                    profile = ns.ANIME4KJS_SIMPLE_DENOISE_M_2X || ns.ANIME4K_LOWEREND_MODE_C;
+                    profileLabel = 'Mode C Denoise (UHD 730 / Archive)';
+                } else if (ns.ANIME4K_HIGHEREND_MODE_C) {
+                    profile = ns.ANIME4K_HIGHEREND_MODE_C;
+                    profileLabel = 'HigherEnd Mode C (Artifact / Denoise HQ)';
+                }
             } else if (preset === 'mode-a-igpu' && ns.ANIME4K_LOWEREND_MODE_A) {
                 profile = ns.ANIME4K_LOWEREND_MODE_A;
                 profileLabel = 'Mode A Balanced (iGPU 7-Pass)';
             } else if (preset === 'simple-m' && ns.ANIME4KJS_SIMPLE_M_2X) {
                 profile = ns.ANIME4KJS_SIMPLE_M_2X;
-                profileLabel = 'Medium CNN 2x (UHD 730/Fast)';
+                profileLabel = 'Medium CNN 2x (Clean Line / UHD 730)';
             } else if (preset === 'simple-l' && ns.ANIME4KJS_SIMPLE_L_2X) {
                 profile = ns.ANIME4KJS_SIMPLE_L_2X;
                 profileLabel = 'Large CNN 2x (Balanced)';
@@ -476,6 +507,9 @@
             } else if (preset === 'mode-a' && ns.ANIME4K_HIGHEREND_MODE_A) {
                 profile = ns.ANIME4K_HIGHEREND_MODE_A;
                 profileLabel = 'HigherEnd Mode A (HQ 7-Pass)';
+            } else if (ns.ANIME4KJS_SIMPLE_DENOISE_M_2X) {
+                profile = ns.ANIME4KJS_SIMPLE_DENOISE_M_2X;
+                profileLabel = 'Mode C Denoise (UHD 730 / Archive)';
             } else if (ns.ANIME4K_HIGHEREND_MODE_A) {
                 profile = ns.ANIME4K_HIGHEREND_MODE_A;
                 profileLabel = 'HigherEnd Mode A (HQ 7-Pass)';
@@ -1855,13 +1889,12 @@
                         '<div class="ai-menu__section" id="aiAnime4kPresetsSection" style="' + (isA4kActive ? '' : 'display:none;') + '">' +
                             '<div class="ai-menu__section-title"><span>Anime4K Model Pipeline</span><span class="ai-menu__section-sub">tuned for dGPU vs iGPU</span></div>' +
                             '<div class="ai-menu__chips" role="group" aria-label="Anime4K Preset">' +
-                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-a' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-a">Mode A (HQ 7-Pass)</button>' +
-                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-a-igpu' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-a-igpu">Mode A (iGPU 7-Pass)</button>' +
-                                '<button class="ai-menu__chip' + (activeA4kPreset === 'simple-m' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="simple-m">Medium CNN (UHD 730)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-c-igpu' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-c-igpu">Mode C Archive / Denoise (UHD 730)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-c' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-c">Mode C HQ (Denoise dGPU)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'simple-m' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="simple-m">Medium CNN (Clean UHD 730)</button>' +
                                 '<button class="ai-menu__chip' + (activeA4kPreset === 'simple-l' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="simple-l">Large CNN (Balanced)</button>' +
-                                '<button class="ai-menu__chip' + (activeA4kPreset === 'simple-ul' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="simple-ul">Ultra-Large CNN</button>' +
-                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-c' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-c">Mode C (Denoise)</button>' +
-                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-b' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-b">Mode B (Soft)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-a' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-a">Mode A (Clean 1080p)</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-b' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-b">Mode B (Soft Lines)</button>' +
                             '</div>' +
                         '</div>' +
                     '</div>' +

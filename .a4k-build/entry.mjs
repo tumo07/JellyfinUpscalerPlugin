@@ -36,6 +36,13 @@ import {
   ANIME4K_LOWEREND_MODE_C,
 } from "anime4k.js";
 
+// Custom ultra-fast Denoise + Restore pipeline tuned for older compressed archives on Intel UHD 730
+export const ANIME4KJS_SIMPLE_DENOISE_M_2X = [
+  Anime4K_Clamp_Highlights,
+  Anime4K_Upscale_Denoise_CNN_x2_M,
+  Anime4K_Restore_CNN_M
+];
+
 export {
   VideoUpscaler,
   ImageUpscaler,

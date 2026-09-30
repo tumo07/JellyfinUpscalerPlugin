@@ -626,6 +626,11 @@ namespace JellyfinUpscalerPlugin.Services
                     return Pick($"Anime batch job on {(width > 0 ? $"{width}x{height}" : "large")} material - 2x; a 4x pass would target 8K for no visible gain.",
                         "apisr-anime-x2", "span-x2", "realesrgan-animevideo-x4");
                 }
+                if (isLowRes || isVeryLowRes)
+                {
+                    return Pick($"Low-resolution anime archive ({width}x{height}) -> compression artifact restoration model.",
+                        "anime-compact-x4", "realesrgan-animevideo-x4", "span-x2", "gpu-fast-x2");
+                }
                 return Pick("Anime content in real time -> hardware GPU real-time model (1440p target).",
                     "gpu-fast-x2", "nomosuni-compact-x2", "span-x2", "anime-compact-x4");
             }

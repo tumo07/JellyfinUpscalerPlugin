@@ -13,7 +13,7 @@
         texture: null,
         videoElement: null,
         animationFrameId: null,
-        sharpness: 0.5,
+        sharpness: 0.75,
         onFpsUpdate: null,
         _fpsFrameCount: 0,
         _fpsLastTime: 0,
@@ -67,7 +67,7 @@
             }
 
             // Reconstruct sub-pixel sample using 36-tap (6x6) separable Lanczos3 sinc interpolation
-            // with soft anti-ringing bounded by the local 2x2 quad to prevent halos on anime line art.
+            // with high-acuity anti-ringing that preserves crisp line contrast on anime and cartoons.
             vec3 lanczos3Resample(vec2 uv, vec2 srcTexelSize) {
                 // Map continuous normalized UV to source pixel coordinate
                 vec2 pos = uv * u_resolution;
@@ -103,29 +103,35 @@
                 }
 
                 vec3 res = (totalWeight > 1e-4) ? (color / totalWeight) : c00;
-                // Soft anti-ringing: clamp excessive ringing while preserving natural edge sharpness
-                vec3 clamped = clamp(res, minQuad, maxQuad);
-                return mix(clamped, clamp(res, 0.0, 1.0), 0.35);
+                // High-acuity anti-ringing: allow negative sinc lobes to form crisp line contrast
+                // while preventing severe ringing halos.
+                vec3 range = maxQuad - minQuad;
+                vec3 softMin = minQuad - range * 0.12;
+                vec3 softMax = maxQuad + range * 0.12;
+                vec3 clamped = clamp(res, softMin, softMax);
+                return mix(clamped, clamp(res, 0.0, 1.0), 0.80);
             }
 
-            // AMD FidelityFX Contrast Adaptive Sharpening (CAS) pass
+            // High-fidelity Contrast-Adaptive Edge Enhancement
+            // Sharpen cartoon/anime line contours and fine details without amplifying flat compression blocks
             vec3 casSharpening(vec2 uv, vec3 center, vec2 srcTexelSize, float strength) {
-                vec2 halfStep = srcTexelSize * 0.5;
-                vec3 n = texture2D(u_texture, uv + vec2(0.0, -halfStep.y)).rgb;
-                vec3 s = texture2D(u_texture, uv + vec2(0.0,  halfStep.y)).rgb;
-                vec3 e = texture2D(u_texture, uv + vec2( halfStep.x, 0.0)).rgb;
-                vec3 w = texture2D(u_texture, uv + vec2(-halfStep.x, 0.0)).rgb;
+                vec2 step = srcTexelSize * 0.75;
+                vec3 n = texture2D(u_texture, uv + vec2(0.0, -step.y)).rgb;
+                vec3 s = texture2D(u_texture, uv + vec2(0.0,  step.y)).rgb;
+                vec3 e = texture2D(u_texture, uv + vec2( step.x, 0.0)).rgb;
+                vec3 w = texture2D(u_texture, uv + vec2(-step.x, 0.0)).rgb;
 
                 vec3 minRGB = min(center, min(min(n, s), min(e, w)));
                 vec3 maxRGB = max(center, max(max(n, s), max(e, w)));
 
-                // Adaptive sharpening weight based on local contrast
-                vec3 d = 1.0 / (maxRGB - minRGB + 0.05);
-                d = clamp(d * (-0.125), -0.125, 0.0);
-                float peak = mix(-0.125, -0.04, strength);
-                d = max(d, vec3(peak));
+                // High-pass 2D Laplacian edge gradient
+                vec3 edge = 4.0 * center - (n + s + e + w);
+                
+                // Adaptive weight: sharpens high-contrast line transitions while suppressing flat noise
+                vec3 contrast = maxRGB - minRGB;
+                vec3 weight = clamp(contrast * strength * 2.0, 0.0, 0.40);
 
-                vec3 result = (center + (n + s + e + w) * d) / (1.0 + 4.0 * d);
+                vec3 result = center + edge * weight;
                 return clamp(result, 0.0, 1.0);
             }
 
@@ -371,31 +377,49 @@
             const gl = this.gl;
             
             // Adaptive target: scale up to 2x integer or match the screen display resolution
-            // Prevents rendering 4K (8.3M pixels) on a 1080p office screen which overwhelms integrated GPUs
+            // Strictly preserve the video's intrinsic aspect ratio to prevent distortion (e.g. 4:3 stretching)
             var targetW, targetH;
+            var videoRatio = video.videoWidth / video.videoHeight;
             if (this._explicitWidth && this._explicitHeight) {
                 targetW = this._explicitWidth;
                 targetH = this._explicitHeight;
             } else {
                 var dpr = window.devicePixelRatio || 1;
-                var displayW = Math.round((this.canvas.clientWidth || window.innerWidth || video.videoWidth) * dpr);
-                var displayH = Math.round((this.canvas.clientHeight || window.innerHeight || video.videoHeight) * dpr);
-                var maxW = Math.max(video.videoWidth, displayW);
-                var maxH = Math.max(video.videoHeight, displayH);
+                // Use the video element's layout dimensions or container/window bounds
+                var layoutW = (video.clientWidth || this.canvas.clientWidth || window.innerWidth || video.videoWidth);
+                var layoutH = (video.clientHeight || this.canvas.clientHeight || window.innerHeight || video.videoHeight);
+                var maxW = Math.max(video.videoWidth, Math.round(layoutW * dpr));
+                var maxH = Math.max(video.videoHeight, Math.round(layoutH * dpr));
 
                 var scale = (video.videoHeight >= 2160) ? 1.0 : 2.0;
-                targetW = Math.min(video.videoWidth * scale, maxW);
-                targetH = Math.min(video.videoHeight * scale, maxH);
+                targetW = Math.round(video.videoWidth * scale);
+                targetH = Math.round(video.videoHeight * scale);
+
+                // Proportional clamp: NEVER clamp W and H independently!
+                // Both dimensions scale together so targetW / targetH strictly equals videoRatio!
+                if (targetW > maxW) {
+                    targetW = maxW;
+                    targetH = Math.round(maxW / videoRatio);
+                }
+                if (targetH > maxH) {
+                    targetH = maxH;
+                    targetW = Math.round(maxH * videoRatio);
+                }
             }
             
+            // Ensure even pixel dimensions
+            targetW = Math.max(2, (Math.round(targetW) & ~1));
+            targetH = Math.max(2, (Math.round(targetH) & ~1));
+
             if (this.canvas.width !== targetW || this.canvas.height !== targetH) {
                 this.canvas.width = targetW;
                 this.canvas.height = targetH;
                 gl.viewport(0, 0, targetW, targetH);
             }
 
-            // Sync aspect ratio: preserve 4:3 with contain, unless user explicitly set fill/cover on video
-            var vidFit = video.style.objectFit;
+            // Sync aspect ratio and CSS alignment with the video element
+            var computedFit = (window.getComputedStyle ? window.getComputedStyle(video).objectFit : '') || '';
+            var vidFit = video.style.objectFit || computedFit || 'contain';
             var fit = (vidFit === 'fill' || vidFit === 'cover') ? vidFit : 'contain';
             if (this.canvas.style.objectFit !== fit) {
                 this.canvas.style.objectFit = fit;
@@ -403,6 +427,8 @@
             if (this.canvas.style.width !== '100%') this.canvas.style.width = '100%';
             if (this.canvas.style.height !== '100%') this.canvas.style.height = '100%';
             if (this.canvas.style.position !== 'absolute') this.canvas.style.position = 'absolute';
+            if (this.canvas.style.top !== '0px' && this.canvas.style.top !== '0') this.canvas.style.top = '0';
+            if (this.canvas.style.left !== '0px' && this.canvas.style.left !== '0') this.canvas.style.left = '0';
             
             // Explicitly bind Texture Unit 0
             gl.activeTexture(gl.TEXTURE0);
