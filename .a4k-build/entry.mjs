@@ -26,6 +26,7 @@ import {
   Anime4K_Thin_Fast,
   Anime4K_Thin_HQ,
   Anime4K_Denoise_Bilateral_Mode,
+  Anime4K_Denoise_Bilateral_Median,
   Anime4K_Deblur_DoG,
   ANIME4KJS_SIMPLE_S_2X,
   ANIME4KJS_SIMPLE_M_2X,
@@ -42,14 +43,34 @@ import {
   ANIME4K_LOWEREND_MODE_C,
 } from "anime4k.js";
 
-// 1. Ultra-fast Denoise + Restore pipeline tuned for older compressed archives on Intel UHD 730
+// 1. Ultra Deblock + Cel Cleanup for heavy low-bitrate SD archives (Bilateral Median + Mode + Cel Line Restore)
+export const ANIME4KJS_ARCHIVE_HEAVY_DEBLOCK_2X = [
+  Anime4K_Clamp_Highlights,
+  Anime4K_Denoise_Bilateral_Median,
+  Anime4K_Denoise_Bilateral_Mode,
+  Anime4K_Darken_Fast,
+  Anime4K_Thin_Fast,
+  Anime4K_Upscale_Denoise_CNN_x2_M,
+  Anime4K_Restore_CNN_M
+];
+
+// 2. Pure Cel Denoise (Bilateral Median & Mode filter: flattens macroblocks while preserving contours)
+export const ANIME4KJS_CEL_CLEAN_2X = [
+  Anime4K_Clamp_Highlights,
+  Anime4K_Denoise_Bilateral_Median,
+  Anime4K_Denoise_Bilateral_Mode,
+  Anime4K_Upscale_CNN_x2_M,
+  Anime4K_Restore_CNN_M
+];
+
+// 3. Ultra-fast Denoise + Restore pipeline tuned for older compressed archives on Intel UHD 730
 export const ANIME4KJS_SIMPLE_DENOISE_M_2X = [
   Anime4K_Clamp_Highlights,
   Anime4K_Upscale_Denoise_CNN_x2_M,
   Anime4K_Restore_CNN_M
 ];
 
-// 2. Mode C+A: Heavy Artifact Cleanup + Line Thinning & Acuity (best for bad 480p DVD/TV rips)
+// 4. Mode C+A: Heavy Artifact Cleanup + Line Thinning & Acuity (best for bad 480p DVD/TV rips)
 export const ANIME4KJS_MODE_CA_2X = [
   Anime4K_Clamp_Highlights,
   Anime4K_Upscale_Denoise_CNN_x2_M,
@@ -57,7 +78,7 @@ export const ANIME4KJS_MODE_CA_2X = [
   Anime4K_Restore_CNN_M
 ];
 
-// 3. Cartoon Pop: Darkens outlines and thins bleeding contours for high-contrast animated cartoons
+// 5. Cartoon Pop: Darkens outlines and thins bleeding contours for high-contrast animated cartoons
 export const ANIME4KJS_CARTOON_POP_2X = [
   Anime4K_Clamp_Highlights,
   Anime4K_Darken_Fast,
@@ -66,7 +87,7 @@ export const ANIME4KJS_CARTOON_POP_2X = [
   Anime4K_Restore_CNN_M
 ];
 
-// 4. Bilateral Denoise: Smooths macroblocks in flat areas while preserving sharp edges
+// 6. Bilateral Denoise: Smooths macroblocks in flat areas while preserving sharp edges
 export const ANIME4KJS_BILATERAL_DENOISE_2X = [
   Anime4K_Clamp_Highlights,
   Anime4K_Denoise_Bilateral_Mode,

@@ -7,7 +7,7 @@
 
     // Plugin configuration
     const PLUGIN_ID = 'f87f700e-679d-43e6-9c7c-b3a410dc3f22';
-    const PLUGIN_VERSION = '1.8.3.56';
+    const PLUGIN_VERSION = '1.8.3.57';
 
     // Prevent double-init
     if (window._aiUpscalerLoaded) return;
@@ -432,8 +432,8 @@
             var isSdArchive = video && video.videoHeight > 0 && video.videoHeight <= 576;
             if (isSdArchive) {
                 // Older archives have compression artifacts, ringing, and macroblocks.
-                // Mode C is specifically designed to denoise & de-artifact older compressed video!
-                return isIGpu ? 'mode-c-igpu' : 'mode-c';
+                // Heavy Bilateral Deblock + Restore eliminates MPEG blocks and mosquito ringing!
+                return 'archive-deblock';
             }
             if (isIGpu) {
                 return 'simple-m'; // Medium CNN 2x (fast 60fps for Intel UHD 730 on clean HD)
@@ -475,7 +475,13 @@
                 }
             } catch (e) {}
 
-            if (preset === 'mode-b' && ns.ANIME4K_HIGHEREND_MODE_B) {
+            if ((preset === 'archive-deblock' || preset === 'archive-heavy-deblock') && ns.ANIME4KJS_ARCHIVE_HEAVY_DEBLOCK_2X) {
+                profile = ns.ANIME4KJS_ARCHIVE_HEAVY_DEBLOCK_2X;
+                profileLabel = 'Archive Heavy Deblock (Bilateral + Cel Restore)';
+            } else if ((preset === 'cel-clean' || preset === 'pure-cel-denoise') && ns.ANIME4KJS_CEL_CLEAN_2X) {
+                profile = ns.ANIME4KJS_CEL_CLEAN_2X;
+                profileLabel = 'Pure Cel Denoise (Bilateral Mode+Median)';
+            } else if (preset === 'mode-b' && ns.ANIME4K_HIGHEREND_MODE_B) {
                 profile = ns.ANIME4K_HIGHEREND_MODE_B;
                 profileLabel = 'HigherEnd Mode B (Soft Lines)';
             } else if ((preset === 'mode-ca-igpu' || preset === 'mode-ca') && ns.ANIME4KJS_MODE_CA_2X) {
@@ -1533,6 +1539,9 @@
                     }
                     if (st.mode === 'lanczos' || st.mode === 'webgl') {
                         var lSharp = parseFloat(localStorage.getItem('ai_upscaler_lanczos_sharpness')) || 0.75;
+                        var lDeblock = parseFloat(localStorage.getItem('ai_upscaler_lanczos_deblock'));
+                        if (isNaN(lDeblock)) lDeblock = 0.75;
+                        out += "Lanczos Deblock  : " + Math.round(lDeblock * 100) + "%\n";
                         out += "Lanczos Sharpness: " + Math.round(lSharp * 100) + "%\n";
                     }
                     
@@ -1816,6 +1825,8 @@
             var activeA4kPreset = RealtimeUpscaler._getAnime4KPreset ? RealtimeUpscaler._getAnime4KPreset() : (localStorage.getItem('ai_upscaler_anime4k_preset') || 'mode-a');
             var isA4kActive = (RealtimeUpscaler._mode === 'anime4k' || (this._cachedConfig && this._cachedConfig.RealtimeMode === 'anime4k'));
             var activeLanczosSharpness = parseFloat(localStorage.getItem('ai_upscaler_lanczos_sharpness')) || 0.75;
+            var activeLanczosDeblock = parseFloat(localStorage.getItem('ai_upscaler_lanczos_deblock'));
+            if (isNaN(activeLanczosDeblock)) activeLanczosDeblock = 0.75;
             var isLanczosActive = (RealtimeUpscaler._mode === 'lanczos' || RealtimeUpscaler._mode === 'webgl' || (this._cachedConfig && (this._cachedConfig.RealtimeMode === 'lanczos' || this._cachedConfig.RealtimeMode === 'webgl')));
             this._fpsHistory = [];
 
@@ -1904,6 +1915,8 @@
                         '<div class="ai-menu__section" id="aiAnime4kPresetsSection" style="' + (isA4kActive ? '' : 'display:none;') + '">' +
                             '<div class="ai-menu__section-title"><span>Anime4K Pipeline Options</span><span class="ai-menu__section-sub">tuned for archives & iGPU</span></div>' +
                             '<div class="ai-menu__chips" role="group" aria-label="Anime4K Preset">' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'archive-deblock' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="archive-deblock" title="Bilateral Median + Mode + Cel Restore: Best for bad 480p DVD/TV rips">Archive Heavy Deblock</button>' +
+                                '<button class="ai-menu__chip' + (activeA4kPreset === 'cel-clean' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="cel-clean" title="Bilateral Mode + Median filter to erase macroblock tiles">Pure Cel Denoise</button>' +
                                 '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-c-igpu' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-c-igpu" title="3-Pass Denoise + Restore for 480p SD on UHD 730">Mode C Denoise (UHD 730)</button>' +
                                 '<button class="ai-menu__chip' + (activeA4kPreset === 'mode-ca-igpu' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="mode-ca-igpu" title="Heavy Artifact Cleanup + Line Thinning">Mode C+A (Heavy Artifacts)</button>' +
                                 '<button class="ai-menu__chip' + (activeA4kPreset === 'cartoon-pop' ? ' ai-menu__chip--active' : '') + '" data-a4k-preset="cartoon-pop" title="Darken & thin cartoon lineart">Cartoon Pop (Deep Contours)</button>' +
@@ -1916,7 +1929,14 @@
                             '</div>' +
                         '</div>' +
                         '<div class="ai-menu__section" id="aiLanczosSettingsSection" style="' + (isLanczosActive ? '' : 'display:none;') + '">' +
-                            '<div class="ai-menu__section-title"><span>Lanczos-3 Sharpness</span><span class="ai-menu__section-sub">contrast-adaptive edge boost</span></div>' +
+                            '<div class="ai-menu__section-title"><span>Lanczos Deblock & Denoise</span><span class="ai-menu__section-sub">smooths 8x8 macroblocks</span></div>' +
+                            '<div class="ai-menu__chips" role="group" aria-label="Lanczos Deblock">' +
+                                '<button class="ai-menu__chip' + (activeLanczosDeblock === 0.00 ? ' ai-menu__chip--active' : '') + '" data-lanczos-deblock="0.00">Off</button>' +
+                                '<button class="ai-menu__chip' + (activeLanczosDeblock === 0.40 ? ' ai-menu__chip--active' : '') + '" data-lanczos-deblock="0.40">Mild (40%)</button>' +
+                                '<button class="ai-menu__chip' + (activeLanczosDeblock === 0.75 ? ' ai-menu__chip--active' : '') + '" data-lanczos-deblock="0.75">Archive (75%)</button>' +
+                                '<button class="ai-menu__chip' + (activeLanczosDeblock === 1.00 ? ' ai-menu__chip--active' : '') + '" data-lanczos-deblock="1.00">Heavy Cel (100%)</button>' +
+                            '</div>' +
+                            '<div class="ai-menu__section-title" style="margin-top:10px;"><span>Lanczos-3 Sharpness</span><span class="ai-menu__section-sub">noise-gated edge boost</span></div>' +
                             '<div class="ai-menu__chips" role="group" aria-label="Lanczos Sharpness">' +
                                 '<button class="ai-menu__chip' + (activeLanczosSharpness === 0.35 ? ' ai-menu__chip--active' : '') + '" data-lanczos-sharp="0.35">Mild (35%)</button>' +
                                 '<button class="ai-menu__chip' + (activeLanczosSharpness === 0.50 ? ' ai-menu__chip--active' : '') + '" data-lanczos-sharp="0.50">Standard (50%)</button>' +
@@ -2048,6 +2068,20 @@
                             switchBtn.textContent = newMode === 'server' ? 'Switch to Lanczos' : 'Switch to Server AI';
                         }
                     }
+                    return;
+                }
+                var deblockBtn = e.target.closest('[data-lanczos-deblock]');
+                if (deblockBtn) {
+                    var dVal = parseFloat(deblockBtn.getAttribute('data-lanczos-deblock')) || 0.0;
+                    localStorage.setItem('ai_upscaler_lanczos_deblock', String(dVal));
+                    var allDeblockBtns = menu.querySelectorAll('[data-lanczos-deblock]');
+                    for (var db = 0; db < allDeblockBtns.length; db++) {
+                        allDeblockBtns[db].classList.toggle('ai-menu__chip--active', parseFloat(allDeblockBtns[db].getAttribute('data-lanczos-deblock')) === dVal);
+                    }
+                    if (window.AIUpscalerWebGL) {
+                        window.AIUpscalerWebGL.setDeblock(dVal);
+                    }
+                    PlayerIntegration.showPlayerNotification('Lanczos deblock: ' + deblockBtn.textContent, 'info');
                     return;
                 }
                 var lanczosBtn = e.target.closest('[data-lanczos-sharp]');

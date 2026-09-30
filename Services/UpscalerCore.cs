@@ -629,7 +629,7 @@ namespace JellyfinUpscalerPlugin.Services
                 if (isLowRes || isVeryLowRes)
                 {
                     return Pick($"Low-resolution anime archive ({width}x{height}) -> compression artifact restoration model.",
-                        "anime-compact-x4", "realesrgan-animevideo-x4", "span-x2", "gpu-fast-x2");
+                        "omdb-2x-animesharpv4", "anime-compact-x4", "realesrgan-animevideo-x4", "span-x2", "gpu-fast-x2");
                 }
                 return Pick("Anime content in real time -> hardware GPU real-time model (1440p target).",
                     "gpu-fast-x2", "nomosuni-compact-x2", "span-x2", "anime-compact-x4");

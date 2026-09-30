@@ -14,6 +14,7 @@
         videoElement: null,
         animationFrameId: null,
         sharpness: 0.75,
+        deblock: 0.75,
         onFpsUpdate: null,
         _fpsFrameCount: 0,
         _fpsLastTime: 0,
@@ -48,6 +49,7 @@
             uniform sampler2D u_texture;
             uniform vec2 u_resolution;  // source (video) dimensions in pixels
             uniform float u_sharpness;  // CAS sharpness slider (0.0 to 1.0)
+            uniform float u_deblock;    // Smart Bilateral Deblocking & Anti-Artifact slider (0.0 to 1.0)
             varying vec2 v_texCoord;
 
             #define PI 3.14159265358979323846
@@ -112,7 +114,52 @@
                 return mix(clamped, clamp(res, 0.0, 1.0), 0.80);
             }
 
-            // High-fidelity Contrast-Adaptive Edge Enhancement
+            // Smart Cel Deblock & Anti-Artifact Filter
+            // Cleans 8x8 MPEG/H.264 macroblock steps and mosquito noise in flat and semi-flat regions
+            // while preserving 100% of high-contrast cartoon outlines.
+            vec3 deblockFilter(vec2 uv, vec3 center, vec2 srcTexelSize, float strength) {
+                if (strength <= 0.01) return center;
+                
+                // Color tolerance: controls the threshold between compression noise and real edges
+                float colorSigma = mix(0.04, 0.14, strength);
+                float invTwoSigmaSq = 1.0 / (2.0 * colorSigma * colorSigma);
+                
+                vec3 accumColor = center;
+                float accumWeight = 1.0;
+                
+                // 12-sample diamond/cross pattern bridging across macroblock boundaries
+                vec2 o1 = srcTexelSize * 0.75;
+                vec2 o2 = srcTexelSize * 1.50;
+                
+                vec2 offsets[12];
+                offsets[0] = vec2( o1.x,  0.0);
+                offsets[1] = vec2(-o1.x,  0.0);
+                offsets[2] = vec2( 0.0,   o1.y);
+                offsets[3] = vec2( 0.0,  -o1.y);
+                offsets[4] = vec2( o1.x,  o1.y);
+                offsets[5] = vec2(-o1.x,  o1.y);
+                offsets[6] = vec2( o1.x, -o1.y);
+                offsets[7] = vec2(-o1.x, -o1.y);
+                offsets[8] = vec2( o2.x,  0.0);
+                offsets[9] = vec2(-o2.x,  0.0);
+                offsets[10]= vec2( 0.0,   o2.y);
+                offsets[11]= vec2( 0.0,  -o2.y);
+                
+                for (int i = 0; i < 12; i++) {
+                    vec3 s = texture2D(u_texture, uv + offsets[i]).rgb;
+                    vec3 diff = s - center;
+                    float distSq = dot(diff, diff);
+                    // Bilateral range weight: high for noise/macroblocks, zero for outlines
+                    float w = exp(-distSq * invTwoSigmaSq);
+                    accumColor += s * w;
+                    accumWeight += w;
+                }
+                
+                vec3 cleaned = accumColor / accumWeight;
+                return mix(center, cleaned, clamp(strength * 1.15, 0.0, 1.0));
+            }
+
+            // High-fidelity Contrast-Adaptive Edge Enhancement with Compression Noise Gate
             // Sharpen cartoon/anime line contours and fine details without amplifying flat compression blocks
             vec3 casSharpening(vec2 uv, vec3 center, vec2 srcTexelSize, float strength) {
                 vec2 step = srcTexelSize * 0.75;
@@ -127,9 +174,11 @@
                 // High-pass 2D Laplacian edge gradient
                 vec3 edge = 4.0 * center - (n + s + e + w);
                 
-                // Adaptive weight: sharpens high-contrast line transitions while suppressing flat noise
-                vec3 contrast = maxRGB - minRGB;
-                vec3 weight = clamp(contrast * strength * 2.0, 0.0, 0.40);
+                // Adaptive weight with compression noise gate:
+                // Only sharpens high-contrast transitions (>0.06); flat block noise is never amplified
+                vec3 rawContrast = maxRGB - minRGB;
+                vec3 contrast = max(vec3(0.0), rawContrast - vec3(0.06));
+                vec3 weight = clamp(contrast * strength * 2.5, 0.0, 0.35);
 
                 vec3 result = center + edge * weight;
                 return clamp(result, 0.0, 1.0);
@@ -142,6 +191,10 @@
                 }
                 vec2 srcTexelSize = 1.0 / u_resolution;
                 vec3 color = lanczos3Resample(v_texCoord, srcTexelSize);
+
+                if (u_deblock > 0.01) {
+                    color = deblockFilter(v_texCoord, color, srcTexelSize, u_deblock);
+                }
 
                 if (u_sharpness > 0.01) {
                     color = casSharpening(v_texCoord, color, srcTexelSize, u_sharpness);
@@ -160,6 +213,13 @@
                 this._texWidth = 0;
                 this._texHeight = 0;
                 this._hasRenderedFrame = false;
+                
+                try {
+                    var sS = parseFloat(localStorage.getItem('ai_upscaler_lanczos_sharpness'));
+                    if (!isNaN(sS)) this.sharpness = sS;
+                    var sD = parseFloat(localStorage.getItem('ai_upscaler_lanczos_deblock'));
+                    if (!isNaN(sD)) this.deblock = sD;
+                } catch (e) {}
                 
                 // Create canvas overlay
                 this.canvas = document.createElement('canvas');
@@ -286,6 +346,7 @@
             this._uniformLocations = {
                 resolution: gl.getUniformLocation(this.program, 'u_resolution'),
                 sharpness: gl.getUniformLocation(this.program, 'u_sharpness'),
+                deblock: gl.getUniformLocation(this.program, 'u_deblock'),
                 texture: gl.getUniformLocation(this.program, 'u_texture')
             };
 
@@ -445,6 +506,9 @@
             }
             gl.uniform2f(this._uniformLocations.resolution, video.videoWidth, video.videoHeight);
             gl.uniform1f(this._uniformLocations.sharpness, this.sharpness);
+            if (this._uniformLocations.deblock) {
+                gl.uniform1f(this._uniformLocations.deblock, this.deblock);
+            }
 
             // Draw
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
@@ -522,6 +586,11 @@
         // Set sharpness (0.0 to 1.0)
         setSharpness: function(value) {
             this.sharpness = Math.max(0, Math.min(1, value));
+        },
+
+        // Set deblock / artifact reduction strength (0.0 to 1.0)
+        setDeblock: function(value) {
+            this.deblock = Math.max(0, Math.min(1, value));
         },
 
         // Set explicit canvas output size (0 = use video native)
