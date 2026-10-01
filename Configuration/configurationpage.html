@@ -765,14 +765,15 @@
                                 <div class="fieldDescription">Select one or more libraries to scope the nightly scan. Leave empty to scan <strong>all</strong> libraries (legacy behavior).</div>
                             </div>
                             <div class="form-row">
-                                <div class="form-col inputContainer"><label class="inputLabel" for="MinResolutionWidth">Min Resolution Width</label><input type="number" id="MinResolutionWidth" min="0" max="7680" /><div class="fieldDescription">Videos below this width are upscaled (default: 1920)</div></div>
-                                <div class="form-col inputContainer"><label class="inputLabel" for="MinResolutionHeight">Min Resolution Height</label><input type="number" id="MinResolutionHeight" min="0" max="4320" /><div class="fieldDescription">Videos below this height are upscaled (default: 1080)</div></div>
+                                <div class="form-col inputContainer"><label class="inputLabel" for="MinResolutionWidth">Min Resolution Width</label><input type="number" id="MinResolutionWidth" min="0" max="7680" /><div class="fieldDescription">Videos below this width are upscaled (default: 1280, SD only)</div></div>
+                                <div class="form-col inputContainer"><label class="inputLabel" for="MinResolutionHeight">Min Resolution Height</label><input type="number" id="MinResolutionHeight" min="0" max="4320" /><div class="fieldDescription">Videos below this height are upscaled (default: 720, skips 720p/1080p HD)</div></div>
                             </div>
                             <div class="form-row" style="margin-top:0.5rem;">
                                 <div class="form-col inputContainer"><label class="inputLabel" for="MaxItemsPerScan">Max Items Per Scan</label><input type="number" id="MaxItemsPerScan" min="0" max="100000" /><div class="fieldDescription">0 = unlimited</div></div>
                             </div>
                             <div class="checkboxContainer" style="margin-top:0.5rem;"><label><input type="checkbox" id="RestrictToUnwatchedContent" /> Only upscale unwatched content</label></div>
                             <div class="checkboxContainer"><label><input type="checkbox" id="SkipUpscaledOnRescan" /> Skip already upscaled items on rescan</label></div>
+                            <div class="checkboxContainer"><label><input type="checkbox" id="SkipDuplicatesAndCopies" /> Skip duplicate and copy files (e.g. 'Copy of', 'Bản sao của', numbered copies)</label></div>
                             <div class="selectContainer" style="margin-top:0.5rem;">
                                 <label class="selectLabel" for="OutputCodec">Output Codec</label>
                                 <select id="OutputCodec">
@@ -2301,7 +2302,7 @@
                     'EnableAutoModelSelection',
                     'PauseQueueDuringPlayback','PersistQueueAcrossRestarts',
                     'WebhookOnComplete','WebhookOnFailure',
-                    'RestrictToUnwatchedContent','SkipUpscaledOnRescan',
+                    'RestrictToUnwatchedContent','SkipUpscaledOnRescan','SkipDuplicatesAndCopies',
                     'EnableRealtimeUpscaling','EnableVideoFilters','EnableDenoisePrefilter','EnablePipelineParallelism',
                     'EnableFaceRestore','EnableObjectMasking','ClientDriverUpscalingActive'];
                 checks.forEach(function(f) {
@@ -2401,7 +2402,7 @@
                     'EnableAutoModelSelection',
                     'PauseQueueDuringPlayback','PersistQueueAcrossRestarts',
                     'WebhookOnComplete','WebhookOnFailure',
-                    'RestrictToUnwatchedContent','SkipUpscaledOnRescan',
+                    'RestrictToUnwatchedContent','SkipUpscaledOnRescan','SkipDuplicatesAndCopies',
                     'EnableRealtimeUpscaling','EnableVideoFilters','EnableDenoisePrefilter','EnablePipelineParallelism',
                     'EnableFaceRestore','EnableObjectMasking','ClientDriverUpscalingActive'];
                 checks.forEach(function(f) {

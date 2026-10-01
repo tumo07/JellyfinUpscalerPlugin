@@ -30,8 +30,8 @@ namespace JellyfinUpscalerPlugin
         private const int DefaultCircuitBreakerThreshold = 5;
         private const int DefaultCircuitBreakerResetSeconds = 60;
         private const int DefaultHealthCheckIntervalSeconds = 60;
-        private const int DefaultMinResolutionWidth = 1920;
-        private const int DefaultMinResolutionHeight = 1080;
+        private const int DefaultMinResolutionWidth = 1280;
+        private const int DefaultMinResolutionHeight = 720;
         private const int DefaultRealtimeTargetFps = 24;
         private const int DefaultRealtimeCaptureWidth = 480;
         private const int DefaultModelDiskQuotaMB = 2048;
@@ -361,6 +361,12 @@ namespace JellyfinUpscalerPlugin
 
         /// <summary>Skip items that already have an _upscaled version on rescan.</summary>
         public bool SkipUpscaledOnRescan { get; set; } = true;
+
+        /// <summary>Skip duplicate and copy files (e.g. 'Copy of', 'Bản sao của', numbered copies) during library scans.</summary>
+        public bool SkipDuplicatesAndCopies { get; set; } = true;
+
+        /// <summary>Minimum duration in seconds for library upscaling scan (default: 30s). Shorter clips are ignored.</summary>
+        public int MinDurationSeconds { get; set; } = 30;
 
         // ── Quality Metrics ───────────────────────────────────────────────
 

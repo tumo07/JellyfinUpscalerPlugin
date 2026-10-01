@@ -1,7 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using MediaBrowser.Controller.Library;
@@ -152,9 +153,9 @@ namespace JellyfinUpscalerPlugin.ScheduledTasks
 
             _logger.LogInformation("AI Upscaler: Found {Total} video items to analyze", totalItems);
 
-            // Resolution threshold from config (default: 1080p)
-            var minWidth = config.MinResolutionWidth > 0 ? config.MinResolutionWidth : 1920;
-            var minHeight = config.MinResolutionHeight > 0 ? config.MinResolutionHeight : 1080;
+            // Resolution threshold from config (default: 1280x720 SD/HD boundary)
+            var minWidth = config.MinResolutionWidth > 0 ? config.MinResolutionWidth : 1280;
+            var minHeight = config.MinResolutionHeight > 0 ? config.MinResolutionHeight : 720;
 
             // Phase 1: Scan and collect low-res items
             var lowResVideos = new List<(Video video, int width, int height)>();
@@ -162,6 +163,8 @@ namespace JellyfinUpscalerPlugin.ScheduledTasks
             var noResolutionCount = 0;
             var alreadyUpscaledCount = 0;
             var highResCount = 0;
+            var duplicateCount = 0;
+            var shortClipCount = 0;
 
             foreach (var item in items)
             {
@@ -176,8 +179,30 @@ namespace JellyfinUpscalerPlugin.ScheduledTasks
                     continue;
                 }
 
+                var fileName = Path.GetFileNameWithoutExtension(video.Path);
+
+                // Skip duplicate/copy files (e.g. "Copy of ...", "Bản sao của ...", "... (1)")
+                if (config.SkipDuplicatesAndCopies && IsDuplicateOrCopy(fileName))
+                {
+                    duplicateCount++;
+                    _logger.LogDebug("AI Upscaler: Skipping duplicate/copy video: {Name}", video.Name);
+                    continue;
+                }
+
+                // Skip short clips/samples (< configured MinDurationSeconds, default 30s)
+                if (config.MinDurationSeconds > 0 && video.RunTimeTicks.HasValue)
+                {
+                    var durationSec = TimeSpan.FromTicks(video.RunTimeTicks.Value).TotalSeconds;
+                    if (durationSec < config.MinDurationSeconds)
+                    {
+                        shortClipCount++;
+                        _logger.LogDebug("AI Upscaler: Skipping short clip ({Sec:F0}s < {Min}s): {Name}", durationSec, config.MinDurationSeconds, video.Name);
+                        continue;
+                    }
+                }
+
                 // v1.6.1.21 - RestrictToUnwatchedContent toggle (P0b). Default: false. When true,
-                // skip items any user has already played â€” avoids compute-waste on shared family
+                // skip items any user has already played — avoids compute-waste on shared family
                 // libraries where some movies are already seen. Counted under alreadyUpscaledCount
                 // for telemetry simplicity (treat "watched" as "no point re-processing").
                 if (config.RestrictToUnwatchedContent && _userManagerAdapter.IsAnyUserPlayed(video))
@@ -186,13 +211,8 @@ namespace JellyfinUpscalerPlugin.ScheduledTasks
                     continue;
                 }
 
-                // Skip if already upscaled (file has _upscaled suffix)
-                // v1.6.1.21 - SkipUpscaledOnRescan toggle (P0b). Default: true. When false, the
-                // user has explicitly opted in to re-processing existing _upscaled files (e.g. to
-                // upgrade from realesrgan-x4 to drct-l-x4). Both check-paths (filename suffix and
-                // sibling-file-exists) are gated by the same toggle for symmetric behavior.
-                var fileName = Path.GetFileNameWithoutExtension(video.Path);
-                if (config.SkipUpscaledOnRescan && fileName.EndsWith("_upscaled", StringComparison.OrdinalIgnoreCase))
+                // Skip if already upscaled (file has _upscaled in filename)
+                if (config.SkipUpscaledOnRescan && fileName.Contains("_upscaled", StringComparison.OrdinalIgnoreCase))
                 {
                     alreadyUpscaledCount++;
                     continue;
@@ -202,10 +222,26 @@ namespace JellyfinUpscalerPlugin.ScheduledTasks
                 var dir = Path.GetDirectoryName(video.Path);
                 var ext = Path.GetExtension(video.Path);
                 var upscaledPath = Path.Combine(dir ?? "", fileName + "_upscaled" + ext);
-                if (config.SkipUpscaledOnRescan && File.Exists(upscaledPath))
+                if (config.SkipUpscaledOnRescan)
                 {
-                    alreadyUpscaledCount++;
-                    continue;
+                    if (File.Exists(upscaledPath))
+                    {
+                        alreadyUpscaledCount++;
+                        continue;
+                    }
+
+                    if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                    {
+                        try
+                        {
+                            if (Directory.EnumerateFiles(dir, fileName + "_upscaled.*").Any())
+                            {
+                                alreadyUpscaledCount++;
+                                continue;
+                            }
+                        }
+                        catch { /* ignore IO issues */ }
+                    }
                 }
 
                 // Check video resolution via media streams (multiple fallback methods)
@@ -234,26 +270,28 @@ namespace JellyfinUpscalerPlugin.ScheduledTasks
                 if (detectedWidth == null || detectedHeight == null)
                 {
                     noResolutionCount++;
-                    _logger.LogDebug("AI Upscaler: Skipping {Name} â€” no resolution info available", video.Name);
+                    _logger.LogDebug("AI Upscaler: Skipping {Name} — no resolution info available", video.Name);
                     continue;
                 }
 
-                if (detectedWidth < minWidth || detectedHeight < minHeight)
+                if (IsLowResolutionVideo(detectedWidth.Value, detectedHeight.Value, minWidth, minHeight))
                 {
                     lowResVideos.Add((video, detectedWidth.Value, detectedHeight.Value));
-                    _logger.LogDebug("AI Upscaler: Candidate: {Name} ({W}x{H})", video.Name, detectedWidth, detectedHeight);
+                    _logger.LogInformation("AI Upscaler: Candidate low-res: {Name} ({W}x{H})", video.Name, detectedWidth, detectedHeight);
                 }
                 else
                 {
                     highResCount++;
+                    _logger.LogDebug("AI Upscaler: Skipping high-res/HD video: {Name} ({W}x{H})", video.Name, detectedWidth, detectedHeight);
                 }
             }
 
             _logger.LogInformation(
-                "AI Upscaler: Scan complete. {Total} videos: {LowRes} below {Width}x{Height}, " +
-                "{HighRes} already high-res, {Upscaled} already upscaled, {NoRes} no resolution info",
-                totalItems, lowResVideos.Count, minWidth, minHeight,
-                highResCount, alreadyUpscaledCount, noResolutionCount);
+                "AI Upscaler: Scan complete. {Total} videos: {LowRes} low-res candidates, " +
+                "{HighRes} already high-res/HD, {Upscaled} already upscaled, {Duplicates} duplicates/copies, " +
+                "{ShortClips} short clips, {NoRes} no resolution info",
+                totalItems, lowResVideos.Count,
+                highResCount, alreadyUpscaledCount, duplicateCount, shortClipCount, noResolutionCount);
 
             if (lowResVideos.Count == 0)
             {
@@ -434,6 +472,93 @@ namespace JellyfinUpscalerPlugin.ScheduledTasks
                 successCount, failCount, lowResVideos.Count);
 
             progress.Report(100);
+        }
+
+        /// <summary>
+        /// Smart detector for genuine low-resolution / standard definition (SD) videos.
+        /// Returns true ONLY for SD content (e.g. 480p, 576p, 360p, 240p).
+        /// Automatically skips Full HD (1080p), cinema widescreen 1080p (e.g. 1920x800),
+        /// 1440p, 4K, and standard 720p HD.
+        /// </summary>
+        public static bool IsLowResolutionVideo(int width, int height, int maxLowResWidth = 1280, int maxLowResHeight = 720)
+        {
+            if (width <= 0 || height <= 0)
+            {
+                return false;
+            }
+
+            int maxDim = Math.Max(width, height);
+            int minDim = Math.Min(width, height);
+            long totalPixels = (long)width * height;
+
+            // 1. Any Full HD / 1080p, 1440p, or 4K video is definitely NOT low-res.
+            // Handles 1080p (1920x1080), ultrawide, and widescreen cinema (e.g. 1920x800, 1920x816).
+            if (maxDim >= 1600 || minDim >= 900 || totalPixels >= 1_200_000)
+            {
+                return false;
+            }
+
+            // 2. Any 720p HD video is high-res (e.g. 1280x720, 1280x534 widescreen, 960x720 4:3).
+            // HD standards start at 720p (~650k-921k pixels).
+            if (maxDim >= 1200 || minDim >= 700 || totalPixels >= 650_000)
+            {
+                return false;
+            }
+
+            // 3. User-configured threshold (if set lower than standard HD, e.g. 720x480):
+            // Both dimensions must be below the configured threshold.
+            if (maxLowResWidth > 0 && maxLowResHeight > 0)
+            {
+                int configuredMax = Math.Max(maxLowResWidth, maxLowResHeight);
+                int configuredMin = Math.Min(maxLowResWidth, maxLowResHeight);
+                if (maxDim >= configuredMax || minDim >= configuredMin)
+                {
+                    return false;
+                }
+            }
+
+            // 4. Genuine low-res / SD resolutions (480p, 576p, 360p, 240p)
+            return true;
+        }
+
+        /// <summary>
+        /// Detects duplicate or copy files generated by OS file managers (Windows Explorer, etc.).
+        /// Matches prefixes ("Copy of ", "Bản sao của ", etc.), infixes (" - Copy", " - Bản sao"),
+        /// and numbered suffixes (" (1)", " (2)").
+        /// </summary>
+        public static bool IsDuplicateOrCopy(string? fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                return false;
+            }
+
+            // Common OS copy prefixes (English, Vietnamese, French, German, Spanish)
+            if (fileName.StartsWith("Copy of ", StringComparison.OrdinalIgnoreCase) ||
+                fileName.StartsWith("Bản sao của ", StringComparison.OrdinalIgnoreCase) ||
+                fileName.StartsWith("Bản sao ", StringComparison.OrdinalIgnoreCase) ||
+                fileName.StartsWith("Copie de ", StringComparison.OrdinalIgnoreCase) ||
+                fileName.StartsWith("Kopie von ", StringComparison.OrdinalIgnoreCase) ||
+                fileName.StartsWith("Copia de ", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            // Common OS copy infixes/suffixes
+            if (fileName.Contains(" - Copy", StringComparison.OrdinalIgnoreCase) ||
+                fileName.Contains(" - Bản sao", StringComparison.OrdinalIgnoreCase) ||
+                fileName.Contains(" - Copie", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            // Suffix pattern: " (1)", " (2)", etc. at end of file name
+            if (Regex.IsMatch(fileName, @"\s*\(\d+\)$"))
+            {
+                return true;
+            }
+
+            return false;
         }
     }
 }

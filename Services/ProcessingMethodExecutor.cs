@@ -142,17 +142,24 @@ namespace JellyfinUpscalerPlugin.Services
             {
                 _logger.LogInformation("Starting frame-by-frame processing");
 
+                // Clean up stale temp directories before checking disk space
+                CleanupStaleTempDirectories(_logger);
+
                 var tempDir = Path.Combine(Path.GetTempPath(), "JellyfinUpscaler", job.Id);
                 Directory.CreateDirectory(tempDir);
 
                 // Disk space check before frame extraction
                 var driveInfo = new DriveInfo(Path.GetPathRoot(tempDir) ?? "/");
-                var estimatedSpaceNeeded = (long)((job.InputInfo?.Duration.TotalSeconds ?? 300) * 25 * 500_000);
-                if (driveInfo.AvailableFreeSpace < estimatedSpaceNeeded)
+                var calcFps = job.InputInfo?.FrameRate > 0 ? job.InputInfo.FrameRate : 25.0;
+                var totalDurationSec = job.InputInfo?.Duration.TotalSeconds > 0 ? job.InputInfo.Duration.TotalSeconds : 300.0;
+                var estimatedFrames = (long)(totalDurationSec * calcFps);
+                var estimatedSpaceNeeded = Math.Max(2L * 1024 * 1024 * 1024, estimatedFrames * 450_000L);
+
+                if (driveInfo.AvailableFreeSpace < 2L * 1024 * 1024 * 1024 || driveInfo.AvailableFreeSpace < estimatedSpaceNeeded)
                 {
-                    _logger.LogError("Insufficient disk space. Need ~{Need}GB, have {Have}GB",
+                    _logger.LogError("Insufficient disk space. Need ~{Need:F1}GB, have {Have:F1}GB",
                         estimatedSpaceNeeded / 1_000_000_000.0, driveInfo.AvailableFreeSpace / 1_000_000_000.0);
-                    throw new InvalidOperationException($"Insufficient disk space for frame extraction");
+                    throw new InvalidOperationException($"Insufficient disk space for frame extraction (need ~{estimatedSpaceNeeded / 1_000_000_000.0:F1}GB, have {driveInfo.AvailableFreeSpace / 1_000_000_000.0:F1}GB)");
                 }
 
                 try
@@ -232,16 +239,26 @@ namespace JellyfinUpscalerPlugin.Services
             {
                 _logger.LogInformation("Starting frame-by-frame processing (pipeline-parallel)");
 
+                // Clean up stale temp directories before checking disk space
+                CleanupStaleTempDirectories(_logger);
+
                 var tempDir = Path.Combine(Path.GetTempPath(), "JellyfinUpscaler", job.Id);
                 Directory.CreateDirectory(tempDir);
 
                 var driveInfo = new DriveInfo(Path.GetPathRoot(tempDir) ?? "/");
-                var estimatedSpaceNeeded = (long)((job.InputInfo?.Duration.TotalSeconds ?? 300) * 25 * 500_000);
-                if (driveInfo.AvailableFreeSpace < estimatedSpaceNeeded)
+                var calcFps = job.InputInfo?.FrameRate > 0 ? job.InputInfo.FrameRate : 25.0;
+                var totalDurationSec = job.InputInfo?.Duration.TotalSeconds > 0 ? job.InputInfo.Duration.TotalSeconds : 300.0;
+                var estimatedFrames = (long)(totalDurationSec * calcFps);
+
+                // In pipeline-parallel (overlapped) processing: extracted frames are deleted immediately
+                // after upscaling. Only processed frames accumulate before encoding (~250KB per SD frame).
+                // Minimum 2 GB hard floor.
+                var estimatedSpaceNeeded = Math.Max(2L * 1024 * 1024 * 1024, estimatedFrames * 250_000L);
+                if (driveInfo.AvailableFreeSpace < 2L * 1024 * 1024 * 1024 || driveInfo.AvailableFreeSpace < estimatedSpaceNeeded)
                 {
-                    _logger.LogError("Insufficient disk space. Need ~{Need}GB, have {Have}GB",
+                    _logger.LogError("Insufficient disk space. Need ~{Need:F1}GB, have {Have:F1}GB",
                         estimatedSpaceNeeded / 1_000_000_000.0, driveInfo.AvailableFreeSpace / 1_000_000_000.0);
-                    throw new InvalidOperationException("Insufficient disk space for frame extraction");
+                    throw new InvalidOperationException($"Insufficient disk space for frame extraction (need ~{estimatedSpaceNeeded / 1_000_000_000.0:F1}GB, have {driveInfo.AvailableFreeSpace / 1_000_000_000.0:F1}GB)");
                 }
 
                 try
@@ -1116,6 +1133,44 @@ namespace JellyfinUpscalerPlugin.Services
                 case "hevc_amf":   return "-c:v hevc_amf -quality quality -rc cqp -qp_p 25 -qp_i 25";
                 case "av1_amf":    return "-c:v av1_amf -quality quality -rc cqp -qp_p 30 -qp_i 30";
                 default:           return $"-c:v {codec} -preset medium -crf 23";
+            }
+        }
+
+        /// <summary>
+        /// Cleans up orphaned or stale temporary directories from previous interrupted or failed runs
+        /// in %TEMP%\JellyfinUpscaler. Preserves active directories modified within the last 15 minutes.
+        /// </summary>
+        public static void CleanupStaleTempDirectories(ILogger? logger = null)
+        {
+            try
+            {
+                var baseTemp = Path.Combine(Path.GetTempPath(), "JellyfinUpscaler");
+                if (!Directory.Exists(baseTemp))
+                {
+                    return;
+                }
+
+                var threshold = DateTime.UtcNow.AddMinutes(-15);
+                foreach (var dir in Directory.GetDirectories(baseTemp))
+                {
+                    try
+                    {
+                        var dirInfo = new DirectoryInfo(dir);
+                        if (dirInfo.LastWriteTimeUtc < threshold)
+                        {
+                            logger?.LogInformation("AI Upscaler: Cleaning up stale temp directory: {Dir}", dir);
+                            Directory.Delete(dir, true);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        logger?.LogDebug(ex, "Could not delete stale temp directory {Dir}", dir);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                logger?.LogWarning(ex, "Failed to run stale temp directory cleanup");
             }
         }
     }
