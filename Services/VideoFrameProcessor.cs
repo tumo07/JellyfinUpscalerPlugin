@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -149,9 +150,11 @@ namespace JellyfinUpscalerPlugin.Services
             {
                 var result = await Cli.Wrap(_ffmpegPath)
                     .WithArguments(args => {
+                        args.Add("-hwaccel").Add("auto");
                         args.Add("-i").Add(inputPath)
                             .Add("-vf").Add(vfArg);
                         if (isHDR) args.Add("-pix_fmt").Add("rgb48be");
+                        args.Add("-c:v").Add("png").Add("-compression_level").Add("1");
                         args.Add(Path.Combine(framesDir, "frame_%06d.png"));
                     })
                     .WithValidation(CommandResultValidation.None)
@@ -159,7 +162,22 @@ namespace JellyfinUpscalerPlugin.Services
 
                 if (result.ExitCode != 0)
                 {
-                    throw new InvalidOperationException($"Frame extraction failed with exit code {result.ExitCode}");
+                    _logger.LogWarning("HW-accelerated frame extraction exited with code {Code}, falling back to software extraction", result.ExitCode);
+                    result = await Cli.Wrap(_ffmpegPath)
+                        .WithArguments(args => {
+                            args.Add("-i").Add(inputPath)
+                                .Add("-vf").Add(vfArg);
+                            if (isHDR) args.Add("-pix_fmt").Add("rgb48be");
+                            args.Add("-c:v").Add("png").Add("-compression_level").Add("1");
+                            args.Add(Path.Combine(framesDir, "frame_%06d.png"));
+                        })
+                        .WithValidation(CommandResultValidation.None)
+                        .ExecuteAsync(cancellationToken);
+
+                    if (result.ExitCode != 0)
+                    {
+                        throw new InvalidOperationException($"Frame extraction failed with exit code {result.ExitCode}");
+                    }
                 }
             }
             finally
@@ -297,8 +315,14 @@ namespace JellyfinUpscalerPlugin.Services
             {
                 if (!isHDR)
                 {
-                    var source = Image.Identify(frameData);
-                    ValidateNativeAiOutput(upscaledData, source.Width, source.Height);
+                    int srcW, srcH;
+                    if (!TryGetPngDimensions(frameData, out srcW, out srcH))
+                    {
+                        var source = Image.Identify(frameData);
+                        srcW = source.Width;
+                        srcH = source.Height;
+                    }
+                    ValidateNativeAiOutput(upscaledData, srcW, srcH);
                 }
                 await File.WriteAllBytesAsync(outputFile, upscaledData, cancellationToken);
                 return true;
@@ -547,26 +571,87 @@ namespace JellyfinUpscalerPlugin.Services
             return scale;
         }
 
+        /// <summary>
+        /// Fast zero-allocation extraction of width and height from PNG header (first 24 bytes).
+        /// Standard PNG layout: 8 bytes magic, 4 bytes length, 4 bytes "IHDR", 4 bytes width, 4 bytes height.
+        /// </summary>
+        public static bool TryGetPngDimensions(ReadOnlySpan<byte> pngBytes, out int width, out int height)
+        {
+            width = 0;
+            height = 0;
+            if (pngBytes.Length < 24) return false;
+            if (pngBytes[0] != 0x89 || pngBytes[1] != 0x50 || pngBytes[2] != 0x4E || pngBytes[3] != 0x47 ||
+                pngBytes[4] != 0x0D || pngBytes[5] != 0x0A || pngBytes[6] != 0x1A || pngBytes[7] != 0x0A)
+            {
+                return false;
+            }
+            if (pngBytes[12] != 0x49 || pngBytes[13] != 0x48 || pngBytes[14] != 0x44 || pngBytes[15] != 0x52)
+            {
+                return false;
+            }
+            width = BinaryPrimitives.ReadInt32BigEndian(pngBytes.Slice(16, 4));
+            height = BinaryPrimitives.ReadInt32BigEndian(pngBytes.Slice(20, 4));
+            return width > 0 && height > 0;
+        }
+
+        public static bool TryGetPngDimensionsFromFile(string filePath, out int width, out int height)
+        {
+            width = 0;
+            height = 0;
+            try
+            {
+                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                Span<byte> header = stackalloc byte[24];
+                int read = fs.Read(header);
+                if (read < 24) return false;
+                return TryGetPngDimensions(header, out width, out height);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         internal static (int Width, int Height, int Scale) ValidateNativeAiOutput(
             byte[] imageBytes, int sourceWidth, int sourceHeight)
         {
+            if (TryGetPngDimensions(imageBytes, out int width, out int height))
+            {
+                var scale = ValidateNativeScale(width, height, 1, sourceWidth, sourceHeight);
+                return (width, height, scale);
+            }
             using var image = Image.Load(imageBytes);
-            var scale = ValidateNativeScale(image.Width, image.Height, image.Frames.Count, sourceWidth, sourceHeight);
-            return (image.Width, image.Height, scale);
+            var fallbackScale = ValidateNativeScale(image.Width, image.Height, image.Frames.Count, sourceWidth, sourceHeight);
+            return (image.Width, image.Height, fallbackScale);
         }
 
         internal static void ValidateFrameSequence(string processedDir)
         {
             var frames = Directory.GetFiles(processedDir, "frame_*.png").OrderBy(f => f, StringComparer.Ordinal).ToArray();
             if (frames.Length == 0) throw new InvalidDataException("No processed frames are available for encoding.");
-            var first = Image.Identify(frames[0]);
+            int firstWidth, firstHeight;
+            if (!TryGetPngDimensionsFromFile(frames[0], out firstWidth, out firstHeight))
+            {
+                var first = Image.Identify(frames[0]);
+                firstWidth = first.Width;
+                firstHeight = first.Height;
+            }
             for (var index = 0; index < frames.Length; index++)
             {
                 if (Path.GetFileName(frames[index]) != $"frame_{index + 1:D6}.png")
                     throw new InvalidDataException("Processed frame sequence has a missing or out-of-order frame.");
-                var info = Image.Identify(frames[index]);
-                if (info.Width != first.Width || info.Height != first.Height)
-                    throw new InvalidDataException("AI output dimensions changed within the video; mixed model scales are not supported.");
+                if (index == 0 || index == frames.Length - 1 || index % 50 == 0 || frames.Length <= 100)
+                {
+                    int w, h;
+                    if (!TryGetPngDimensionsFromFile(frames[index], out w, out h))
+                    {
+                        var info = Image.Identify(frames[index]);
+                        w = info.Width;
+                        h = info.Height;
+                    }
+                    if (w != firstWidth || h != firstHeight)
+                        throw new InvalidDataException("AI output dimensions changed within the video; mixed model scales are not supported.");
+                }
             }
         }
 

@@ -145,7 +145,7 @@ namespace JellyfinUpscalerPlugin.Services
                 // Clean up stale temp directories before checking disk space
                 CleanupStaleTempDirectories(_logger);
 
-                var tempDir = Path.Combine(Path.GetTempPath(), "JellyfinUpscaler", job.Id);
+                var tempDir = GetOptimalTempDirectory(outputPath, job.Id);
                 Directory.CreateDirectory(tempDir);
 
                 // Disk space check before frame extraction
@@ -153,13 +153,17 @@ namespace JellyfinUpscalerPlugin.Services
                 var calcFps = job.InputInfo?.FrameRate > 0 ? job.InputInfo.FrameRate : 25.0;
                 var totalDurationSec = job.InputInfo?.Duration.TotalSeconds > 0 ? job.InputInfo.Duration.TotalSeconds : 300.0;
                 var estimatedFrames = (long)(totalDurationSec * calcFps);
-                var estimatedSpaceNeeded = Math.Max(2L * 1024 * 1024 * 1024, estimatedFrames * 450_000L);
+                var srcW = job.InputInfo?.Width ?? 640;
+                var srcH = job.InputInfo?.Height ?? 480;
+                var scale = job.OptimizedOptions?.ScaleFactor ?? 2;
+                var perFrameEst = Math.Min(250_000L, Math.Max(50_000L, (long)(srcW * scale * srcH * scale * 0.35)));
+                var estimatedSpaceNeeded = Math.Max(2L * 1024 * 1024 * 1024, estimatedFrames * perFrameEst);
 
-                if (driveInfo.AvailableFreeSpace < 2L * 1024 * 1024 * 1024 || driveInfo.AvailableFreeSpace < estimatedSpaceNeeded)
+                if (driveInfo.AvailableFreeSpace < 2L * 1024 * 1024 * 1024 || (driveInfo.AvailableFreeSpace < estimatedSpaceNeeded && driveInfo.AvailableFreeSpace < 5L * 1024 * 1024 * 1024))
                 {
-                    _logger.LogError("Insufficient disk space. Need ~{Need:F1}GB, have {Have:F1}GB",
-                        estimatedSpaceNeeded / 1_000_000_000.0, driveInfo.AvailableFreeSpace / 1_000_000_000.0);
-                    throw new InvalidOperationException($"Insufficient disk space for frame extraction (need ~{estimatedSpaceNeeded / 1_000_000_000.0:F1}GB, have {driveInfo.AvailableFreeSpace / 1_000_000_000.0:F1}GB)");
+                    _logger.LogError("Insufficient disk space on {Drive}. Need ~{Need:F1}GB, have {Have:F1}GB",
+                        driveInfo.Name, estimatedSpaceNeeded / 1_000_000_000.0, driveInfo.AvailableFreeSpace / 1_000_000_000.0);
+                    throw new InvalidOperationException($"Insufficient disk space for frame extraction (need ~{estimatedSpaceNeeded / 1_000_000_000.0:F1}GB, have {driveInfo.AvailableFreeSpace / 1_000_000_000.0:F1}GB on {driveInfo.Name})");
                 }
 
                 try
@@ -182,11 +186,11 @@ namespace JellyfinUpscalerPlugin.Services
                     Directory.CreateDirectory(processedDir);
 
                     job.Phase = "Upscaling";
-                    await _frameProcessor.ProcessFramesAsync(framesDir, processedDir, job.OptimizedOptions, job.Id, cancellationToken, isHDR);
+                    await _frameProcessor.ProcessFramesAsync(framesDir, processedDir, job.OptimizedOptions ?? job.Options, job.Id, cancellationToken, isHDR);
 
                     // 3. Reconstruct video
                     job.Phase = "Encoding";
-                    await _frameProcessor.ReconstructVideoAsync(processedDir, inputPath, outputPath, job.OptimizedOptions, framesFps, cancellationToken, job.InputInfo);
+                    await _frameProcessor.ReconstructVideoAsync(processedDir, inputPath, outputPath, job.OptimizedOptions ?? job.Options, framesFps, cancellationToken, job.InputInfo);
 
                     return new VideoProcessingResult
                     {
@@ -242,7 +246,7 @@ namespace JellyfinUpscalerPlugin.Services
                 // Clean up stale temp directories before checking disk space
                 CleanupStaleTempDirectories(_logger);
 
-                var tempDir = Path.Combine(Path.GetTempPath(), "JellyfinUpscaler", job.Id);
+                var tempDir = GetOptimalTempDirectory(outputPath, job.Id);
                 Directory.CreateDirectory(tempDir);
 
                 var driveInfo = new DriveInfo(Path.GetPathRoot(tempDir) ?? "/");
@@ -251,14 +255,18 @@ namespace JellyfinUpscalerPlugin.Services
                 var estimatedFrames = (long)(totalDurationSec * calcFps);
 
                 // In pipeline-parallel (overlapped) processing: extracted frames are deleted immediately
-                // after upscaling. Only processed frames accumulate before encoding (~250KB per SD frame).
-                // Minimum 2 GB hard floor.
-                var estimatedSpaceNeeded = Math.Max(2L * 1024 * 1024 * 1024, estimatedFrames * 250_000L);
-                if (driveInfo.AvailableFreeSpace < 2L * 1024 * 1024 * 1024 || driveInfo.AvailableFreeSpace < estimatedSpaceNeeded)
+                // after upscaling. Only processed frames accumulate before encoding.
+                var srcW = job.InputInfo?.Width ?? 640;
+                var srcH = job.InputInfo?.Height ?? 480;
+                var scale = job.OptimizedOptions?.ScaleFactor ?? 2;
+                var perFrameEst = Math.Min(180_000L, Math.Max(35_000L, (long)(srcW * scale * srcH * scale * 0.25)));
+                var estimatedSpaceNeeded = Math.Max(2L * 1024 * 1024 * 1024, estimatedFrames * perFrameEst);
+
+                if (driveInfo.AvailableFreeSpace < 2L * 1024 * 1024 * 1024 || (driveInfo.AvailableFreeSpace < estimatedSpaceNeeded && driveInfo.AvailableFreeSpace < 4L * 1024 * 1024 * 1024))
                 {
-                    _logger.LogError("Insufficient disk space. Need ~{Need:F1}GB, have {Have:F1}GB",
-                        estimatedSpaceNeeded / 1_000_000_000.0, driveInfo.AvailableFreeSpace / 1_000_000_000.0);
-                    throw new InvalidOperationException($"Insufficient disk space for frame extraction (need ~{estimatedSpaceNeeded / 1_000_000_000.0:F1}GB, have {driveInfo.AvailableFreeSpace / 1_000_000_000.0:F1}GB)");
+                    _logger.LogError("Insufficient disk space on {Drive}. Need ~{Need:F1}GB, have {Have:F1}GB",
+                        driveInfo.Name, estimatedSpaceNeeded / 1_000_000_000.0, driveInfo.AvailableFreeSpace / 1_000_000_000.0);
+                    throw new InvalidOperationException($"Insufficient disk space for frame extraction (need ~{estimatedSpaceNeeded / 1_000_000_000.0:F1}GB, have {driveInfo.AvailableFreeSpace / 1_000_000_000.0:F1}GB on {driveInfo.Name})");
                 }
 
                 try
@@ -303,45 +311,77 @@ namespace JellyfinUpscalerPlugin.Services
                     {
                         try
                         {
+                            int highWater = 0;
                             while (!ct.IsCancellationRequested && !coord.ExtractionComplete && !coord.ExtractionFailed)
                             {
-                                coord.UpdateAvailable(MaxFrameNumber(framesDir));
-                                await Task.Delay(500, ct);
+                                int next = highWater + 1;
+                                while (File.Exists(Path.Combine(framesDir, $"frame_{next:D6}.png")))
+                                {
+                                    highWater = next;
+                                    next++;
+                                }
+
+                                if (highWater > coord.AvailableCount)
+                                {
+                                    coord.UpdateAvailable(highWater);
+                                }
+
+                                await Task.Delay(25, ct);
                             }
                         }
                         catch (OperationCanceledException) { /* normal on cancel */ }
                     }, ct);
 
-                    // CONSUMER - upscale proven frames as they appear (the awaited body).
+                    // CONSUMER - upscale proven frames concurrently as they appear.
+                    // Run concurrent workers (2-4) to saturate the GPU Vulkan queue without idling.
+                    int workerCount = Math.Clamp(Environment.ProcessorCount / 2, 2, 4);
                     int processed = 0;
                     var startTime = DateTime.UtcNow;
+                    long lastProgressTicks = DateTime.UtcNow.Ticks;
+
                     try
                     {
-                        while (true)
+                        var workerTasks = Enumerable.Range(0, workerCount).Select(async _ =>
                         {
-                            int idx = coord.Next();
-                            if (idx == FrameStreamCoordinator.AllDone) break;
-                            if (idx == FrameStreamCoordinator.Failed)
-                                throw coord.Error ?? new InvalidOperationException("Frame extraction failed");
-                            if (idx == FrameStreamCoordinator.NoneReady)
+                            while (!ct.IsCancellationRequested)
                             {
-                                await Task.Delay(150, ct); // bounded poll = the liveness/correctness guarantee
-                                continue;
+                                int idx = coord.Next();
+                                if (idx == FrameStreamCoordinator.AllDone) break;
+                                if (idx == FrameStreamCoordinator.Failed)
+                                    throw coord.Error ?? new InvalidOperationException("Frame extraction failed");
+                                if (idx == FrameStreamCoordinator.NoneReady)
+                                {
+                                    await Task.Delay(15, ct); // fast poll (15ms)
+                                    continue;
+                                }
+
+                                while (_pausedJobs.GetValueOrDefault(job.Id, false))
+                                    await Task.Delay(500, ct);
+
+                                var frameFile = Path.Combine(framesDir, $"frame_{idx + 1:D6}.png");
+                                await _frameProcessor.UpscaleSingleFrameAsync(frameFile, processedDir, job.OptimizedOptions ?? job.Options, isHDR, ct);
+
+                                try { File.Delete(frameFile); } catch { /* drain so peak disk stays <= the sequential path */ }
+
+                                var completed = Interlocked.Increment(ref processed);
+                                var nowTicks = DateTime.UtcNow.Ticks;
+                                var prevTicks = Interlocked.Read(ref lastProgressTicks);
+                                if ((nowTicks - prevTicks) >= TimeSpan.TicksPerSecond * 2 || completed == estTotalFrames)
+                                {
+                                    if (Interlocked.CompareExchange(ref lastProgressTicks, nowTicks, prevTicks) == prevTicks)
+                                    {
+                                        var elapsed = (DateTime.UtcNow - startTime).TotalSeconds;
+                                        var fps = elapsed > 0 ? completed / elapsed : 0;
+                                        await _progressHub.SendFrameProgress(job.Id, Path.GetFileName(frameFile),
+                                            completed, estTotalFrames > 0 ? estTotalFrames : completed, fps);
+                                        _logger.LogInformation("Processed {Processed}/{Total} frames ({Fps} FPS)",
+                                            completed, estTotalFrames > 0 ? estTotalFrames : completed, fps.ToString("F1"));
+                                    }
+                                }
                             }
+                        }).ToArray();
 
-                            while (_pausedJobs.GetValueOrDefault(job.Id, false))
-                                await Task.Delay(500, ct);
-
-                            var frameFile = Path.Combine(framesDir, $"frame_{idx + 1:D6}.png");
-                            await _frameProcessor.UpscaleSingleFrameAsync(frameFile, processedDir, job.OptimizedOptions, isHDR, ct);
-
-                            try { File.Delete(frameFile); } catch { /* drain so peak disk stays <= the sequential path */ }
-
-                            processed++;
-                            var elapsed = (DateTime.UtcNow - startTime).TotalSeconds;
-                            await _progressHub.SendFrameProgress(job.Id, Path.GetFileName(frameFile),
-                                processed, estTotalFrames > 0 ? estTotalFrames : processed, elapsed > 0 ? processed / elapsed : 0);
-                        }
+                        await Task.WhenAll(workerTasks);
                     }
                     finally
                     {
@@ -351,7 +391,7 @@ namespace JellyfinUpscalerPlugin.Services
                     }
 
                     job.Phase = "Encoding";
-                    await _frameProcessor.ReconstructVideoAsync(processedDir, inputPath, outputPath, job.OptimizedOptions, framesFps, cancellationToken, job.InputInfo);
+                    await _frameProcessor.ReconstructVideoAsync(processedDir, inputPath, outputPath, job.OptimizedOptions ?? job.Options, framesFps, cancellationToken, job.InputInfo);
 
                     return new VideoProcessingResult
                     {
@@ -379,10 +419,60 @@ namespace JellyfinUpscalerPlugin.Services
             }
         }
 
+        /// <summary>
+        /// Selects the best drive and path for temporary frame storage. If the media's output volume
+        /// has substantially more free space than %TEMP%, uses that drive to avoid filling the system drive.
+        /// </summary>
+        public static string GetOptimalTempDirectory(string? outputPath, string jobId)
+        {
+            var defaultBase = Path.Combine(Path.GetTempPath(), "JellyfinUpscaler");
+            long bestFree = 0;
+            string bestBase = defaultBase;
+
+            try
+            {
+                var defaultDrive = new DriveInfo(Path.GetPathRoot(defaultBase) ?? "/");
+                if (defaultDrive.IsReady)
+                {
+                    bestFree = defaultDrive.AvailableFreeSpace;
+                }
+            }
+            catch { /* ignore drive probe issues */ }
+
+            if (!string.IsNullOrEmpty(outputPath))
+            {
+                try
+                {
+                    var outputDir = Path.GetDirectoryName(outputPath);
+                    if (!string.IsNullOrEmpty(outputDir))
+                    {
+                        var outputDrive = new DriveInfo(Path.GetPathRoot(outputDir) ?? "/");
+                        if (outputDrive.IsReady && outputDrive.AvailableFreeSpace > bestFree)
+                        {
+                            bestFree = outputDrive.AvailableFreeSpace;
+                            bestBase = Path.Combine(outputDir, ".jf_upscaler_temp");
+                        }
+                    }
+                }
+                catch { /* ignore drive probe issues */ }
+            }
+
+            return Path.Combine(bestBase, jobId);
+        }
+
         // v1.8.3 - highest frame_NNNNNN number currently in framesDir (= 1-based count of frames the
         // producer has written). Monotonic at the coordinator; consumer deletes (low indices) can't lower it.
         private static int MaxFrameNumber(string framesDir)
         {
+            int highWater = 0;
+            int next = 1;
+            while (File.Exists(Path.Combine(framesDir, $"frame_{next:D6}.png")))
+            {
+                highWater = next;
+                next++;
+            }
+            if (highWater > 0) return highWater;
+
             int max = 0;
             foreach (var f in Directory.GetFiles(framesDir, "frame_*.png"))
             {

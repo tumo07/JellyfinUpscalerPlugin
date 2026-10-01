@@ -108,4 +108,28 @@ public sealed class AiFrameOutputTests
         }
         finally { Directory.Delete(directory, true); }
     }
+
+    [Theory]
+    [InlineData(1920, 1080)]
+    [InlineData(716, 536)]
+    [InlineData(496, 368)]
+    [InlineData(1, 1)]
+    public void TryGetPngDimensions_AccuratelyExtractsDimensions(int width, int height)
+    {
+        var bytes = Png(width, height);
+        var success = VideoFrameProcessor.TryGetPngDimensions(bytes, out var w, out var h);
+        Assert.True(success);
+        Assert.Equal(width, w);
+        Assert.Equal(height, h);
+    }
+
+    [Fact]
+    public void TryGetPngDimensions_RejectsInvalidBytes()
+    {
+        var invalid = new byte[] { 1, 2, 3, 4, 5 };
+        var success = VideoFrameProcessor.TryGetPngDimensions(invalid, out var w, out var h);
+        Assert.False(success);
+        Assert.Equal(0, w);
+        Assert.Equal(0, h);
+    }
 }
