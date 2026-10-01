@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -1112,6 +1112,9 @@ namespace JellyfinUpscalerPlugin.Services
                 case "h264_qsv":   return "-c:v h264_qsv -preset slow -global_quality 23";
                 case "hevc_qsv":   return "-c:v hevc_qsv -preset slow -global_quality 25";
                 case "av1_qsv":    return "-c:v av1_qsv -preset slow -global_quality 30";
+                case "h264_amf":   return "-c:v h264_amf -quality quality -rc cqp -qp_p 23 -qp_i 23";
+                case "hevc_amf":   return "-c:v hevc_amf -quality quality -rc cqp -qp_p 25 -qp_i 25";
+                case "av1_amf":    return "-c:v av1_amf -quality quality -rc cqp -qp_p 30 -qp_i 30";
                 default:           return $"-c:v {codec} -preset medium -crf 23";
             }
         }

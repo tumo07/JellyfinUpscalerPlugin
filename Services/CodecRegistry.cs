@@ -39,6 +39,8 @@ namespace JellyfinUpscalerPlugin.Services
             "h264_nvenc", "hevc_nvenc", "av1_nvenc",
             // Intel Quick Sync (GPU)
             "h264_qsv", "hevc_qsv", "av1_qsv",
+            // AMD AMF (GPU)
+            "h264_amf", "hevc_amf", "av1_amf",
             // Stream copy (no re-encode)
             "copy"
         };
@@ -48,8 +50,8 @@ namespace JellyfinUpscalerPlugin.Services
         ///   - "copy" -- meaningless when re-encoding upscaled frames into a stream
         ///   - libsvtav1, libaom-av1, libvpx-vp9 -- software AV1/VP9 cannot keep up with
         ///     realtime frame rates even on fast CPUs
-        ///   - av1_nvenc, av1_qsv -- excluded conservatively pending validation on RTX 40+
-        ///     and Arc hardware in the realtime pipe path; users who pick AV1-HW for batch
+        ///   - av1_nvenc, av1_qsv, av1_amf -- excluded conservatively pending validation on modern
+        ///     generation hardware in the realtime pipe path; users who pick AV1-HW for batch
         ///     still get it via <see cref="OutputCodecs"/>, just not for realtime today
         ///
         /// Picking a codec outside this set in the UI silently falls back to libx264 in the
@@ -60,7 +62,8 @@ namespace JellyfinUpscalerPlugin.Services
         {
             "libx264", "libx265",
             "h264_nvenc", "hevc_nvenc",
-            "h264_qsv", "hevc_qsv"
+            "h264_qsv", "hevc_qsv",
+            "h264_amf", "hevc_amf"
         };
     }
 }

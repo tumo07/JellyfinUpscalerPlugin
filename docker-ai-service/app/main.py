@@ -1953,30 +1953,97 @@ def _register_custom_models_from_disk(models_dir, available_models) -> int:
     return restored
 
 
-import asyncio
-import subprocess
+import ctypes
+from ctypes import wintypes
+import threading
 import time
 
-async def poll_gpu_stats():
+class _WindowsGpuMonitor:
+    """Non-blocking, zero-process Windows PDH monitor for GPU 3D load and dedicated VRAM.
+    Samples in <1ms without freezing the asyncio event loop or launching powershell.exe."""
+    def __init__(self):
+        self._pdh = None
+        self._query = None
+        self._c_gpu = None
+        self._c_vram = None
+        self._initialized = False
+        self._init_pdh()
+
+    def _init_pdh(self):
+        if platform.system() != "Windows":
+            return
+        try:
+            self._pdh = ctypes.windll.pdh
+            self._query = wintypes.HANDLE()
+            if self._pdh.PdhOpenQueryW(None, 0, ctypes.byref(self._query)) != 0:
+                return
+            self._c_gpu = wintypes.HANDLE()
+            self._pdh.PdhAddEnglishCounterW(self._query, r'\GPU Engine(*engtype_3D*)\Utilization Percentage', 0, ctypes.byref(self._c_gpu))
+            self._c_vram = wintypes.HANDLE()
+            self._pdh.PdhAddEnglishCounterW(self._query, r'\GPU Adapter Memory(*)\Dedicated Usage', 0, ctypes.byref(self._c_vram))
+            self._pdh.PdhCollectQueryData(self._query)
+            self._initialized = True
+        except Exception:
+            self._initialized = False
+
+    def sample(self):
+        if not self._initialized:
+            return 0.0, 0
+        try:
+            self._pdh.PdhCollectQueryData(self._query)
+            class PDH_FMT_COUNTERVALUE(ctypes.Structure):
+                _fields_ = [('CStatus', wintypes.DWORD), ('padding', wintypes.DWORD), ('doubleValue', ctypes.c_double)]
+            class PDH_FMT_COUNTERVALUE_ITEM_W(ctypes.Structure):
+                _fields_ = [('szName', wintypes.LPWSTR), ('FmtValue', PDH_FMT_COUNTERVALUE)]
+            PDH_FMT_DOUBLE = 0x00000200
+
+            gpu_load = 0.0
+            size = wintypes.DWORD(0)
+            count = wintypes.DWORD(0)
+            self._pdh.PdhGetFormattedCounterArrayW(self._c_gpu, PDH_FMT_DOUBLE, ctypes.byref(size), ctypes.byref(count), None)
+            if size.value > 0:
+                buf = (ctypes.c_byte * size.value)()
+                if self._pdh.PdhGetFormattedCounterArrayW(self._c_gpu, PDH_FMT_DOUBLE, ctypes.byref(size), ctypes.byref(count), buf) == 0:
+                    items = ctypes.cast(buf, ctypes.POINTER(PDH_FMT_COUNTERVALUE_ITEM_W))
+                    gpu_load = sum(items[i].FmtValue.doubleValue for i in range(count.value) if items[i].FmtValue.CStatus == 0)
+
+            vram = 0
+            size.value = 0
+            count.value = 0
+            self._pdh.PdhGetFormattedCounterArrayW(self._c_vram, PDH_FMT_DOUBLE, ctypes.byref(size), ctypes.byref(count), None)
+            if size.value > 0:
+                buf_vram = (ctypes.c_byte * size.value)()
+                if self._pdh.PdhGetFormattedCounterArrayW(self._c_vram, PDH_FMT_DOUBLE, ctypes.byref(size), ctypes.byref(count), buf_vram) == 0:
+                    items_vram = ctypes.cast(buf_vram, ctypes.POINTER(PDH_FMT_COUNTERVALUE_ITEM_W))
+                    vram = int(sum(items_vram[i].FmtValue.doubleValue for i in range(count.value) if items_vram[i].FmtValue.CStatus == 0))
+
+            return round(gpu_load, 1), vram
+        except Exception:
+            return 0.0, 0
+
+_gpu_monitor = _WindowsGpuMonitor()
+
+def _bg_gpu_stats_loop():
+    """Background daemon thread: updates state.gpu_load & state.gpu_vram in <1ms without blocking asyncio."""
     while True:
         try:
-            cmd_load = ['powershell', '-NoProfile', '-Command', r"(Get-Counter '\GPU Engine(*engtype_3D*)\Utilization Percentage' -ErrorAction SilentlyContinue).CounterSamples | Measure-Object -Property CookedValue -Sum | Select -ExpandProperty Sum"]
-            load_str = subprocess.check_output(cmd_load, stderr=subprocess.DEVNULL).decode('utf-8').strip()
-            state.gpu_load = float(load_str) if load_str else 0.0
-
-            cmd_vram = ['powershell', '-NoProfile', '-Command', r"(Get-Counter '\GPU Adapter Memory(*)\Dedicated Usage' -ErrorAction SilentlyContinue).CounterSamples | Measure-Object -Property CookedValue -Sum | Select -ExpandProperty Sum"]
-            vram_str = subprocess.check_output(cmd_vram, stderr=subprocess.DEVNULL).decode('utf-8').strip()
-            state.gpu_vram = int(vram_str) if vram_str else 0
+            load, vram = _gpu_monitor.sample()
+            state.gpu_load = load
+            state.gpu_vram = vram
         except Exception:
             pass
-        await asyncio.sleep(2)
+        time.sleep(2)
+
+def start_gpu_stats_collector():
+    t = threading.Thread(target=_bg_gpu_stats_loop, daemon=True, name="gpu-stats-collector")
+    t.start()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup and shutdown."""
     logger.info(f"Starting AI Upscaler Service v{VERSION}...")
     
-    asyncio.create_task(poll_gpu_stats())
+    start_gpu_stats_collector()
     # Create directories
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
@@ -2978,8 +3045,8 @@ def upscale_image(image_bytes: bytes) -> bytes:
     else:
         raise ModelNotReadyError("No model loaded")
 
-    # Encode as PNG
-    _, buffer = cv2.imencode('.png', result)
+    # Encode as PNG with fast compression to minimize CPU cycles
+    _, buffer = cv2.imencode('.png', result, [cv2.IMWRITE_PNG_COMPRESSION, 1])
     return buffer.tobytes()
 
 

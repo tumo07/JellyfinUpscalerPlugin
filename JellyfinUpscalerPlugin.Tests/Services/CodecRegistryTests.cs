@@ -29,11 +29,11 @@ namespace JellyfinUpscalerPlugin.Tests.Services
     public class CodecRegistryTests
     {
         [Fact]
-        public void OutputCodecs_HasExactly12Entries_LockingDriftAgainstUI()
+        public void OutputCodecs_HasExactly15Entries_LockingDriftAgainstUI()
         {
             // Drift-lock: if you add or remove a codec you MUST update both the UI and this count.
-            CodecRegistry.OutputCodecs.Should().HaveCount(12,
-                "the settings UI #OutputCodec dropdown advertises 12 codecs across 4 optgroups");
+            CodecRegistry.OutputCodecs.Should().HaveCount(15,
+                "the settings UI #OutputCodec dropdown advertises 15 codecs across 5 optgroups");
         }
 
         [Theory]
@@ -48,6 +48,9 @@ namespace JellyfinUpscalerPlugin.Tests.Services
         [InlineData("h264_qsv")]
         [InlineData("hevc_qsv")]
         [InlineData("av1_qsv")]
+        [InlineData("h264_amf")]
+        [InlineData("hevc_amf")]
+        [InlineData("av1_amf")]
         [InlineData("copy")]
         public void OutputCodecs_ContainsEachUIDropdownOption(string codec)
         {
