@@ -360,7 +360,7 @@ def _invalidate_models_cache() -> None:
 # workers at MAX_CPU_WORKERS (default: cpu_count) so we don't over-subscribe the
 # CPU when multiple concurrent requests arrive simultaneously.
 _cpu_executor = ThreadPoolExecutor(
-    max_workers=int(os.getenv("MAX_CPU_WORKERS", str(os.cpu_count() or 4))),
+    max_workers=int(os.getenv("MAX_CPU_WORKERS", str(min(4, os.cpu_count() or 4)))),
     thread_name_prefix="upscaler"
 )
 
@@ -2406,7 +2406,12 @@ async def load_ncnn_model(model_name: str, model_info: dict, model_path: Path) -
             net.opt.use_packing_layout = True
             net.opt.use_sgemm_convolution = True
             net.opt.use_winograd_convolution = True
-            net.opt.num_threads = 6
+            net.opt.use_winograd23_convolution = True
+            net.opt.use_winograd43_convolution = True
+            net.opt.use_winograd63_convolution = True
+            net.opt.lightmode = True
+            net.opt.num_threads = 2
+            net.opt.openmp_blocktime = 0
             net.load_param(str(param_path))
             net.load_model(str(bin_path))
             upscaler = net
@@ -2419,6 +2424,9 @@ async def load_ncnn_model(model_name: str, model_info: dict, model_path: Path) -
             state.ncnn_gpu_id = gpu_id
             state.current_model = model_name
             state.current_model_type = "ncnn"
+            state.max_concurrent = 2
+            global _upscale_semaphore
+            _upscale_semaphore = asyncio.Semaphore(2)
             state.current_model_input_frames = model_info.get("input_frames", 1)
             state.onnx_model_scale = scale  # For compatibility with benchmark
             state.providers = ["VulkanComputeProvider"]
@@ -2495,8 +2503,8 @@ def upscale_with_ncnn(img: np.ndarray) -> np.ndarray:
             ex.input("data", mat_in)
             _, mat_out = ex.extract("output")
             raw = mat_out.numpy()
-            arr = raw.transpose(1, 2, 0)
-            return cv2.convertScaleAbs(arr, alpha=255.0)
+            out_c = cv2.convertScaleAbs(raw, alpha=255.0)
+            return np.transpose(out_c, (1, 2, 0))
 
         # Multi-tile path with blend weighting for oversized images (e.g. 4K)
         overlap = 32
@@ -2534,12 +2542,12 @@ def upscale_with_ncnn(img: np.ndarray) -> np.ndarray:
                 # ncnn inference
                 mat_in = ncnn.Mat.from_pixels(tile, ncnn.Mat.PixelType.PIXEL_BGR, tw, th)
                 mat_in.substract_mean_normalize([], [1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0])
-                with _infer_lock:
-                    ex = upscaler.create_extractor()
-                    ex.input("data", mat_in)
-                    _, mat_out = ex.extract("output")
+                ex = upscaler.create_extractor()
+                ex.input("data", mat_in)
+                _, mat_out = ex.extract("output")
                 raw = np.array(mat_out)
-                result_tile = (raw.reshape(3, th * scale, tw * scale).transpose(1, 2, 0) * 255.0).astype(np.float32)
+                out_c = cv2.convertScaleAbs(raw.reshape(3, th * scale, tw * scale), alpha=255.0)
+                result_tile = np.transpose(out_c, (1, 2, 0)).astype(np.float32)
 
                 oy, ox = y_start * scale, x_start * scale
                 oth, otw = th * scale, tw * scale
@@ -3011,8 +3019,8 @@ async def download_model(model_name: str, progress_cb=None) -> bool:
             return False
 
 
-def upscale_image(image_bytes: bytes) -> bytes:
-    """Upscale an image using the loaded model (OpenCV or ONNX)."""
+def upscale_image_with_format(image_bytes: bytes, out_format: str = "auto") -> tuple[bytes, str]:
+    """Upscale an image using the loaded model and encode as requested format (jpg or png)."""
     # Snapshot model state under lock for thread-safe dispatch
     with _model_lock:
         model_type = state.current_model_type
@@ -3021,6 +3029,15 @@ def upscale_image(image_bytes: bytes) -> bytes:
         has_ncnn = state.ncnn_upscaler is not None
         if state.current_model is None:
             raise ModelNotReadyError("No model loaded")
+
+    # Determine output format
+    is_jpeg_input = image_bytes.startswith(b'\xff\xd8')
+    if out_format == "auto":
+        target_fmt = "jpg" if is_jpeg_input else "png"
+    elif out_format.lower() in ("jpg", "jpeg"):
+        target_fmt = "jpg"
+    else:
+        target_fmt = "png"
 
     # Decode image
     nparr = np.frombuffer(image_bytes, np.uint8)
@@ -3042,12 +3059,32 @@ def upscale_image(image_bytes: bytes) -> bytes:
     elif model_type == "ncnn" and has_ncnn:
         # Upscale using ncnn-Vulkan
         result = upscale_with_ncnn(img)
+    elif model_type == "gpu_fast":
+        # Upscale using hardware OpenCL (AMD RX 6700 XT)
+        result = upscale_with_gpu_fast(img)
     else:
         raise ModelNotReadyError("No model loaded")
 
-    # Encode as PNG with fast compression to minimize CPU cycles
-    _, buffer = cv2.imencode('.png', result, [cv2.IMWRITE_PNG_COMPRESSION, 1])
-    return buffer.tobytes()
+    if target_fmt == "jpg":
+        # Ultra-fast SIMD JPEG encoding (1-2ms, near 0% CPU)
+        _, buffer = cv2.imencode('.jpg', result, [
+            cv2.IMWRITE_JPEG_QUALITY, 95,
+            cv2.IMWRITE_JPEG_OPTIMIZE, 0
+        ])
+        return buffer.tobytes(), "image/jpeg"
+    else:
+        # Fast PNG encoding with Huffman-only strategy to avoid CPU bottleneck
+        _, buffer = cv2.imencode('.png', result, [
+            cv2.IMWRITE_PNG_COMPRESSION, 1,
+            cv2.IMWRITE_PNG_STRATEGY, cv2.IMWRITE_PNG_STRATEGY_HUFFMAN_ONLY
+        ])
+        return buffer.tobytes(), "image/png"
+
+
+def upscale_image(image_bytes: bytes) -> bytes:
+    """Upscale an image using the loaded model (backward compatible, returns PNG bytes)."""
+    data, _ = upscale_image_with_format(image_bytes, out_format="png")
+    return data
 
 
 def _pq_to_linear(frame_16bit: np.ndarray) -> np.ndarray:
@@ -4153,8 +4190,8 @@ def run_benchmark(test_size: int = 256) -> dict:
     
     if state.current_model_type == "onnx":
         scale = state.onnx_model_scale
-    elif state.current_model_type == "ncnn":
-        scale = state.ncnn_model_scale
+    elif state.current_model_type in ("ncnn", "gpu_fast"):
+        scale = state.ncnn_model_scale or 2
     else:
         scale = state.cv_model_scale
 
@@ -4285,8 +4322,8 @@ async def status():
     """Get service status."""
     if state.current_model_type == "onnx":
         scale = state.onnx_model_scale
-    elif state.current_model_type == "ncnn":
-        scale = state.ncnn_model_scale
+    elif state.current_model_type in ("ncnn", "gpu_fast"):
+        scale = state.ncnn_model_scale or 2
     else:
         scale = state.cv_model_scale if state.cv_model else None
     
@@ -4308,6 +4345,7 @@ async def status():
         "model_type": state.current_model_type,
         "available_providers": state.providers,
         "using_gpu": gpu_is_active(),
+        "gpu_name": state.gpu_name,
         "gpu_load": state.gpu_load,
         "gpu_vram": state.gpu_vram,
         "loaded_models": [state.current_model] if state.current_model else [],
@@ -5089,7 +5127,8 @@ async def load_model_endpoint(
 async def upscale_endpoint(
     request: Request,
     file: UploadFile = File(...),
-    scale: int = Form(2)
+    scale: int = Form(2),
+    format: str = Form("auto")
 ):
     """Upscale an image. Scale is determined by the loaded model; the scale parameter is validated for consistency."""
     _require_api_token(request)
@@ -5101,8 +5140,8 @@ async def upscale_endpoint(
     # Validate scale against loaded model's native scale
     if state.current_model_type == "onnx":
         model_scale = state.onnx_model_scale
-    elif state.current_model_type == "ncnn":
-        model_scale = state.ncnn_model_scale
+    elif state.current_model_type in ("ncnn", "gpu_fast"):
+        model_scale = state.ncnn_model_scale or 2
     else:
         model_scale = state.cv_model_scale
     if scale != model_scale:
@@ -5112,15 +5151,13 @@ async def upscale_endpoint(
     # (protects against /config recreating the semaphore mid-request)
     sem = _upscale_semaphore
     acquired = False
-    # Python 3.12 broke asyncio.wait_for(coro, timeout=0): the coroutine is
-    # wrapped in a Task, cancellation is scheduled immediately, and the Task
-    # never gets to run before being cancelled â€” causing permanent 429.
-    # Fix: check _value directly (safe in asyncio; no await between check and
-    # acquire, so no other coroutine can interleave).
-    if sem is None or sem.locked():
+    if sem is None:
+        raise HTTPException(status_code=503, detail="AI service initializing")
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=30.0)
+        acquired = True
+    except asyncio.TimeoutError:
         raise HTTPException(status_code=429, detail="Too many concurrent requests", headers={"Retry-After": "1"})
-    await sem.acquire()
-    acquired = True
     with _processing_count_lock:
         state.processing_count += 1
 
@@ -5132,13 +5169,24 @@ async def upscale_endpoint(
         if len(image_bytes) > MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail=f"Image too large ({len(image_bytes)} bytes, max {MAX_UPLOAD_BYTES})")
 
+        # Determine requested format
+        req_fmt = format
+        if req_fmt == "auto":
+            query_fmt = request.query_params.get("format", "")
+            if query_fmt:
+                req_fmt = query_fmt
+            elif "image/jpeg" in request.headers.get("Accept", ""):
+                req_fmt = "jpg"
+
         # Upscale in thread pool to not block async
         loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(_cpu_executor, upscale_image, image_bytes)
+        result, media_type = await loop.run_in_executor(
+            _cpu_executor, upscale_image_with_format, image_bytes, req_fmt
+        )
 
         duration_ms = (time.time() - start_time) * 1000
         _record_success(model_name, duration_ms)
-        return Response(content=result, media_type="image/png")
+        return Response(content=result, media_type=media_type)
 
     except HTTPException:
         raise
@@ -5184,8 +5232,8 @@ async def upscale_frame_hdr(
     # Validate scale against loaded model's native scale
     if state.current_model_type == "onnx":
         model_scale = state.onnx_model_scale
-    elif state.current_model_type == "ncnn":
-        model_scale = state.ncnn_model_scale
+    elif state.current_model_type in ("ncnn", "gpu_fast"):
+        model_scale = state.ncnn_model_scale or 2
     else:
         model_scale = state.cv_model_scale
     if scale != model_scale:
@@ -5194,11 +5242,13 @@ async def upscale_frame_hdr(
     # Capture semaphore reference for safe release
     sem = _upscale_semaphore
     acquired = False
-    # See /upscale for explanation of why we avoid asyncio.wait_for(timeout=0)
-    if sem is None or sem.locked():
+    if sem is None:
+        raise HTTPException(status_code=503, detail="AI service initializing")
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=30.0)
+        acquired = True
+    except asyncio.TimeoutError:
         raise HTTPException(status_code=429, detail="Too many concurrent requests", headers={"Retry-After": "1"})
-    await sem.acquire()
-    acquired = True
     with _processing_count_lock:
         state.processing_count += 1
 
@@ -5357,11 +5407,13 @@ async def upscale_video_chunk(request: Request):
     # Capture semaphore reference for safe release
     sem = _upscale_semaphore
     acquired = False
-    # See /upscale for explanation of why we avoid asyncio.wait_for(timeout=0)
-    if sem is None or sem.locked():
+    if sem is None:
+        raise HTTPException(status_code=503, detail="AI service initializing")
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=30.0)
+        acquired = True
+    except asyncio.TimeoutError:
         raise HTTPException(status_code=503, detail="Busy", headers={"Retry-After": "1"})
-    await sem.acquire()
-    acquired = True
     with _processing_count_lock:
         state.processing_count += 1
 
@@ -5494,8 +5546,8 @@ def _run_frame_benchmark(width: int, height: int) -> dict:
         "using_gpu": gpu_is_active(),
         "capture_width": width,
         "capture_height": height,
-        "output_width": width * (state.onnx_model_scale if state.current_model_type == "onnx" else (state.ncnn_model_scale if state.current_model_type == "ncnn" else state.cv_model_scale)),
-        "output_height": height * (state.onnx_model_scale if state.current_model_type == "onnx" else (state.ncnn_model_scale if state.current_model_type == "ncnn" else state.cv_model_scale))
+        "output_width": width * (state.onnx_model_scale if state.current_model_type == "onnx" else (state.ncnn_model_scale if state.current_model_type in ("ncnn", "gpu_fast") else state.cv_model_scale)),
+        "output_height": height * (state.onnx_model_scale if state.current_model_type == "onnx" else (state.ncnn_model_scale if state.current_model_type in ("ncnn", "gpu_fast") else state.cv_model_scale))
     }
 
 
@@ -5545,9 +5597,12 @@ async def upscale_stream(request: Request):
 
     # Acquire concurrency semaphore AFTER validation (prevents leak on bad headers)
     sem = _upscale_semaphore
-    if sem is None or sem.locked():
+    if sem is None:
+        raise HTTPException(status_code=503, detail="AI service initializing")
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=30.0)
+    except asyncio.TimeoutError:
         raise HTTPException(status_code=429, detail="Too many concurrent requests", headers={"Retry-After": "1"})
-    await sem.acquire()
     with _processing_count_lock:
         state.processing_count += 1
 
@@ -5560,7 +5615,7 @@ async def upscale_stream(request: Request):
             "model_type": state.current_model_type,
             "cv_model": state.cv_model,
             "scale": (state.onnx_model_scale if state.current_model_type == "onnx"
-                      else state.ncnn_model_scale if state.current_model_type == "ncnn"
+                      else state.ncnn_model_scale if state.current_model_type in ("ncnn", "gpu_fast")
                       else state.cv_model_scale),
         }
         onnx_session = state.onnx_session
@@ -5941,6 +5996,8 @@ async def health_detailed():
             gpu_healthy = state.ncnn_upscaler is not None
             if not gpu_healthy:
                 gpu_error = "ncnn-Vulkan upscaler not loaded"
+        elif state.current_model_type == "gpu_fast":
+            gpu_healthy = True
         elif state.onnx_session:
             try:
                 providers = state.onnx_session.get_providers()

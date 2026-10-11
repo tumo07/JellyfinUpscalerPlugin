@@ -453,8 +453,10 @@ namespace JellyfinUpscalerPlugin.Controllers
                     hardwareAcceleration = config.HardwareAcceleration,
                     gpuModel = hardware.GpuModel,
                     supportsCUDA = hardware.SupportsCUDA,
-                    estimatedPerformance = hardware.SupportsCUDA ? "High (GPU/CUDA)" : (hardware.SupportsDirectML ? "Medium (GPU/DirectML)" : "Low (CPU)"),
-                    message = $"AI upscaling test successful on {hardware.GpuModel ?? "CPU"} with {config.Model} model at {config.ScaleFactor}x scale"
+                    supportsVulkan = hardware.SupportsVulkan,
+                    supportsOpenCL = hardware.SupportsOpenCL,
+                    estimatedPerformance = hardware.SupportsCUDA ? "High (GPU/CUDA)" : (hardware.SupportsVulkan ? "High (GPU/Vulkan)" : (hardware.SupportsOpenCL ? "High (GPU/OpenCL)" : (hardware.SupportsDirectML ? "Medium (GPU/DirectML)" : "Low (CPU)"))),
+                    message = $"AI upscaling test successful on {(!string.IsNullOrEmpty(hardware.GpuModel) ? hardware.GpuModel : "CPU")} with {config.Model} model at {config.ScaleFactor}x scale"
                 });
             }
             catch (Exception ex)
@@ -1686,6 +1688,208 @@ namespace JellyfinUpscalerPlugin.Controllers
             {
                 _logger.LogError(ex, "Failed to cancel job {JobId}", jobId);
                 return StatusCode(500, new { success = false, error = "Internal server error" });
+            }
+        }
+
+        // ============================================================
+        // === Pre-upscaled Media Library Status API ===
+        // ============================================================
+
+        /// <summary>
+        /// Get a list of library videos showing whether each is pre-upscaled, pending upscale, or native HD.
+        /// </summary>
+        [HttpGet("preupscaled")]
+        [Produces(MediaTypeNames.Application.Json)]
+        public ActionResult<object> GetPreUpscaledVideos(
+            [FromQuery] string filter = "all",
+            [FromQuery] string? search = null,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 50)
+        {
+            try
+            {
+                var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+                var minWidth = config.MinResolutionWidth > 0 ? config.MinResolutionWidth : 1280;
+                var minHeight = config.MinResolutionHeight > 0 ? config.MinResolutionHeight : 720;
+
+                var query = new InternalItemsQuery
+                {
+                    MediaTypes = new[] { Jellyfin.Data.Enums.MediaType.Video },
+                    IsVirtualItem = false,
+                    Recursive = true
+                };
+
+                var items = _libraryManager.GetItemList(query);
+                int totalCount = 0;
+                int upscaledCount = 0;
+                int pendingCount = 0;
+                int highResCount = 0;
+
+                var videoList = new List<(Video Video, int Width, int Height, bool IsPreUpscaled, string? UpscaledPath, long UpscaledSize, DateTime? UpscaledDate, string Status)>();
+
+                foreach (var item in items)
+                {
+                    if (item is not Video video || string.IsNullOrEmpty(video.Path))
+                        continue;
+
+                    totalCount++;
+                    var fileName = Path.GetFileNameWithoutExtension(video.Path);
+                    var dir = Path.GetDirectoryName(video.Path);
+                    var ext = Path.GetExtension(video.Path);
+
+                    int width = video.Width;
+                    int height = video.Height;
+                    if (width <= 0 || height <= 0)
+                    {
+                        var stream = video.GetMediaStreams()?.FirstOrDefault(s => s.Type == MediaStreamType.Video);
+                        if (stream != null && stream.Width.GetValueOrDefault() > 0 && stream.Height.GetValueOrDefault() > 0)
+                        {
+                            width = stream.Width.GetValueOrDefault();
+                            height = stream.Height.GetValueOrDefault();
+                        }
+                    }
+
+                    bool isUpscaledSelf = fileName.Contains("_upscaled", StringComparison.OrdinalIgnoreCase);
+                    string? upscaledPath = null;
+                    long upscaledSize = 0;
+                    DateTime? upscaledDate = null;
+
+                    if (isUpscaledSelf)
+                    {
+                        upscaledPath = video.Path;
+                        try
+                        {
+                            var fi = new FileInfo(video.Path);
+                            if (fi.Exists)
+                            {
+                                upscaledSize = fi.Length;
+                                upscaledDate = fi.LastWriteTimeUtc;
+                            }
+                        }
+                        catch { }
+                    }
+                    else if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+                    {
+                        var exact = Path.Combine(dir, fileName + "_upscaled" + ext);
+                        if (IOFile.Exists(exact))
+                        {
+                            upscaledPath = exact;
+                        }
+                        else
+                        {
+                            try
+                            {
+                                var match = Directory.EnumerateFiles(dir, fileName + "_upscaled.*").FirstOrDefault();
+                                if (match != null) upscaledPath = match;
+                            }
+                            catch { }
+                        }
+
+                        if (upscaledPath != null)
+                        {
+                            try
+                            {
+                                var fi = new FileInfo(upscaledPath);
+                                if (fi.Exists)
+                                {
+                                    upscaledSize = fi.Length;
+                                    upscaledDate = fi.LastWriteTimeUtc;
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+
+                    bool isPreUpscaled = upscaledPath != null;
+                    bool isLowRes = ScheduledTasks.LibraryUpscaleScanTask.IsLowResolutionVideo(width, height, minWidth, minHeight);
+
+                    string status;
+                    if (isPreUpscaled)
+                    {
+                        status = "Pre-Upscaled";
+                        upscaledCount++;
+                    }
+                    else if (isLowRes)
+                    {
+                        status = "Pending";
+                        pendingCount++;
+                    }
+                    else
+                    {
+                        status = "Native HD";
+                        highResCount++;
+                    }
+
+                    videoList.Add((video, width, height, isPreUpscaled, upscaledPath, upscaledSize, upscaledDate, status));
+                }
+
+                // Filter
+                var filtered = videoList.AsEnumerable();
+                if (!string.IsNullOrWhiteSpace(search))
+                {
+                    filtered = filtered.Where(v =>
+                        v.Video.Name.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                        Path.GetFileName(v.Video.Path).Contains(search, StringComparison.OrdinalIgnoreCase));
+                }
+
+                if (string.Equals(filter, "upscaled", StringComparison.OrdinalIgnoreCase))
+                {
+                    filtered = filtered.Where(v => v.IsPreUpscaled);
+                }
+                else if (string.Equals(filter, "pending", StringComparison.OrdinalIgnoreCase))
+                {
+                    filtered = filtered.Where(v => !v.IsPreUpscaled && v.Status == "Pending");
+                }
+                else if (string.Equals(filter, "highres", StringComparison.OrdinalIgnoreCase))
+                {
+                    filtered = filtered.Where(v => v.Status == "Native HD");
+                }
+
+                var filteredList = filtered.ToList();
+                int filteredTotal = filteredList.Count;
+
+                // Paginate
+                page = Math.Max(1, page);
+                pageSize = Math.Clamp(pageSize, 10, 200);
+                var pagedItems = filteredList
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .Select(v => new
+                    {
+                        id = v.Video.Id.ToString(),
+                        name = v.Video.Name,
+                        fileName = Path.GetFileName(v.Video.Path),
+                        path = v.Video.Path,
+                        width = v.Width,
+                        height = v.Height,
+                        resolution = v.Width > 0 && v.Height > 0 ? $"{v.Width}x{v.Height}" : "Unknown",
+                        isPreUpscaled = v.IsPreUpscaled,
+                        upscaledPath = v.UpscaledPath,
+                        upscaledFileName = v.UpscaledPath != null ? Path.GetFileName(v.UpscaledPath) : null,
+                        upscaledSize = v.UpscaledSize,
+                        upscaledDate = v.UpscaledDate,
+                        status = v.Status
+                    })
+                    .ToList();
+
+                return Ok(new
+                {
+                    success = true,
+                    total = totalCount,
+                    filteredTotal = filteredTotal,
+                    upscaledCount = upscaledCount,
+                    pendingCount = pendingCount,
+                    highResCount = highResCount,
+                    page = page,
+                    pageSize = pageSize,
+                    totalPages = (int)Math.Ceiling((double)filteredTotal / pageSize),
+                    items = pagedItems
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to get pre-upscaled videos list");
+                return StatusCode(500, new { success = false, error = ex.Message });
             }
         }
 

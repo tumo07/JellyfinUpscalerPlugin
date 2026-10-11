@@ -200,12 +200,15 @@ namespace JellyfinUpscalerPlugin.Models
         
         public bool SupportsCUDA { get; set; }
         public bool SupportsDirectML { get; set; }
+        public bool SupportsVulkan { get; set; }
+        public bool SupportsOpenCL { get; set; }
         public bool OpenCVSupportsCUDA { get; set; }
         
         // Docker AI Service compatibility
         public bool ServiceAvailable { get; set; }
         public bool CudaAvailable { get; set; }
         public bool DirectMlAvailable { get; set; }
+        public bool VulkanAvailable { get; set; }
         public DateTime DetectionTime { get; set; } = DateTime.UtcNow;
         
         public List<string> AvailableProviders { get; set; } = new();

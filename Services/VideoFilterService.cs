@@ -43,9 +43,14 @@ namespace JellyfinUpscalerPlugin.Services
         /// <see cref="PluginConfiguration.EnableDenoisePrefilter"/>, so it works with
         /// preset = "none". Returns null when disabled or strength is ~0.
         /// </summary>
-        public string? BuildDenoisePrefilter(PluginConfiguration config)
+        public string? BuildDenoisePrefilter(PluginConfiguration config, string? model = null)
         {
             if (!config.EnableDenoisePrefilter)
+                return null;
+
+            // v1.8.3 - AI models with built-in denoising or pure GPU fast path do not need CPU hqdn3d extraction bottleneck
+            var m = (model ?? config.Model ?? "").ToLowerInvariant();
+            if (m.Contains("realesrgan") || m.Contains("ncnn") || m.Contains("gpu-fast") || m.Contains("animesharp"))
                 return null;
 
             var strength = config.DenoisePrefilterStrength;

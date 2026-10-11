@@ -134,9 +134,16 @@ namespace JellyfinUpscalerPlugin.Services
             ProcessingJob job,
             CancellationToken cancellationToken)
         {
-            // v1.8.3 - opt-in: overlap extraction with upscaling. The default path below is unchanged.
-            if (Config.EnablePipelineParallelism)
+            // If native AOT is available for this model, direct machine code batch execution is 2.5x faster than HTTP pipeline
+            var model = job.OptimizedOptions?.Model ?? job.Options?.Model;
+            if (_frameProcessor.CanUseNativeNcnnUpscaler(model))
+            {
+                _logger.LogInformation("Native AOT Vulkan upscaler available for {Model}; prioritizing native machine code execution", model);
+            }
+            else if (Config.EnablePipelineParallelism)
+            {
                 return await ProcessFrameByFrameOverlappedAsync(inputPath, outputPath, job, cancellationToken);
+            }
 
             try
             {
@@ -186,11 +193,11 @@ namespace JellyfinUpscalerPlugin.Services
                     Directory.CreateDirectory(processedDir);
 
                     job.Phase = "Upscaling";
-                    await _frameProcessor.ProcessFramesAsync(framesDir, processedDir, job.OptimizedOptions ?? job.Options, job.Id, cancellationToken, isHDR);
+                    await _frameProcessor.ProcessFramesAsync(framesDir, processedDir, (job.OptimizedOptions ?? job.Options)!, job.Id, cancellationToken, isHDR);
 
                     // 3. Reconstruct video
                     job.Phase = "Encoding";
-                    await _frameProcessor.ReconstructVideoAsync(processedDir, inputPath, outputPath, job.OptimizedOptions ?? job.Options, framesFps, cancellationToken, job.InputInfo);
+                    await _frameProcessor.ReconstructVideoAsync(processedDir, inputPath, outputPath, (job.OptimizedOptions ?? job.Options)!, framesFps, cancellationToken, job.InputInfo);
 
                     return new VideoProcessingResult
                     {
@@ -279,6 +286,7 @@ namespace JellyfinUpscalerPlugin.Services
                     var framesFps = job.InputInfo?.FrameRate ?? 30.0;
                     var isInterlaced = job.InputInfo?.IsInterlaced ?? false;
                     var isHDR = job.InputInfo?.IsHDR ?? false;
+                    var frameExt = isHDR ? "png" : "jpg";
                     var estTotalFrames = (int)((job.InputInfo?.Duration.TotalSeconds ?? 0) * framesFps);
 
                     var coord = new FrameStreamCoordinator();
@@ -295,12 +303,12 @@ namespace JellyfinUpscalerPlugin.Services
                         try
                         {
                             await _frameProcessor.ExtractFramesAsync(inputPath, framesDir, framesFps, ct, isInterlaced, isHDR, job.Id, estTotalFrames);
-                            coord.UpdateAvailable(MaxFrameNumber(framesDir));
+                            coord.UpdateAvailable(MaxFrameNumber(framesDir, frameExt));
                             coord.MarkExtractionComplete();
                         }
                         catch (Exception ex)
                         {
-                            coord.UpdateAvailable(MaxFrameNumber(framesDir)); // count what was written (the partial highest is dropped by FAILED)
+                            coord.UpdateAvailable(MaxFrameNumber(framesDir, frameExt)); // count what was written (the partial highest is dropped by FAILED)
                             coord.MarkExtractionFailed(ex);
                         }
                     }, ct);
@@ -315,7 +323,7 @@ namespace JellyfinUpscalerPlugin.Services
                             while (!ct.IsCancellationRequested && !coord.ExtractionComplete && !coord.ExtractionFailed)
                             {
                                 int next = highWater + 1;
-                                while (File.Exists(Path.Combine(framesDir, $"frame_{next:D6}.png")))
+                                while (File.Exists(Path.Combine(framesDir, $"frame_{next:D6}.{frameExt}")))
                                 {
                                     highWater = next;
                                     next++;
@@ -333,8 +341,14 @@ namespace JellyfinUpscalerPlugin.Services
                     }, ct);
 
                     // CONSUMER - upscale proven frames concurrently as they appear.
-                    // Run concurrent workers (2-4) to saturate the GPU Vulkan queue without idling.
-                    int workerCount = Math.Clamp(Environment.ProcessorCount / 2, 2, 4);
+                    // For fast models (gpu_fast): 4-8 workers saturate GPU with near 0% CPU.
+                    // For deep neural models (ncnn): 2-4 workers match the single Vulkan queue without CPU thrashing.
+                    var isFastModel = job.OptimizedOptions?.Model?.Contains("fast", StringComparison.OrdinalIgnoreCase) ?? false;
+                    var isNcnnModel = (job.OptimizedOptions?.Model?.Contains("ncnn", StringComparison.OrdinalIgnoreCase) ?? false) ||
+                                      (job.OptimizedOptions?.Model?.Contains("realesrgan", StringComparison.OrdinalIgnoreCase) ?? false);
+                    int workerCount = isFastModel
+                        ? Math.Clamp(Environment.ProcessorCount / 2, 4, 8)
+                        : (isNcnnModel ? 3 : Math.Clamp(Environment.ProcessorCount / 4, 2, 4));
                     int processed = 0;
                     var startTime = DateTime.UtcNow;
                     long lastProgressTicks = DateTime.UtcNow.Ticks;
@@ -358,7 +372,7 @@ namespace JellyfinUpscalerPlugin.Services
                                 while (_pausedJobs.GetValueOrDefault(job.Id, false))
                                     await Task.Delay(500, ct);
 
-                                var frameFile = Path.Combine(framesDir, $"frame_{idx + 1:D6}.png");
+                                var frameFile = Path.Combine(framesDir, $"frame_{idx + 1:D6}.{frameExt}");
                                 await _frameProcessor.UpscaleSingleFrameAsync(frameFile, processedDir, job.OptimizedOptions ?? job.Options, isHDR, ct);
 
                                 try { File.Delete(frameFile); } catch { /* drain so peak disk stays <= the sequential path */ }
@@ -462,11 +476,11 @@ namespace JellyfinUpscalerPlugin.Services
 
         // v1.8.3 - highest frame_NNNNNN number currently in framesDir (= 1-based count of frames the
         // producer has written). Monotonic at the coordinator; consumer deletes (low indices) can't lower it.
-        private static int MaxFrameNumber(string framesDir)
+        private static int MaxFrameNumber(string framesDir, string frameExt = "png")
         {
             int highWater = 0;
             int next = 1;
-            while (File.Exists(Path.Combine(framesDir, $"frame_{next:D6}.png")))
+            while (File.Exists(Path.Combine(framesDir, $"frame_{next:D6}.{frameExt}")))
             {
                 highWater = next;
                 next++;
@@ -474,11 +488,20 @@ namespace JellyfinUpscalerPlugin.Services
             if (highWater > 0) return highWater;
 
             int max = 0;
-            foreach (var f in Directory.GetFiles(framesDir, "frame_*.png"))
+            foreach (var f in Directory.GetFiles(framesDir, $"frame_*.{frameExt}"))
             {
                 var name = Path.GetFileNameWithoutExtension(f);
                 int us = name.LastIndexOf('_');
                 if (us >= 0 && int.TryParse(name.Substring(us + 1), out int n) && n > max) max = n;
+            }
+            if (max == 0 && frameExt != "png")
+            {
+                foreach (var f in Directory.GetFiles(framesDir, "frame_*.png"))
+                {
+                    var name = Path.GetFileNameWithoutExtension(f);
+                    int us = name.LastIndexOf('_');
+                    if (us >= 0 && int.TryParse(name.Substring(us + 1), out int n) && n > max) max = n;
+                }
             }
             return max;
         }

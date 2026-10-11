@@ -252,6 +252,9 @@ namespace JellyfinUpscalerPlugin
         /// <summary>Override model for live-action content (empty = auto-select).</summary>
         public string PreferredLiveActionModel { get; set; } = "";
 
+        /// <summary>Custom path to the native realesrgan-ncnn-vulkan executable for high-performance direct AOT upscaling (empty = auto-detect).</summary>
+        public string NativeNcnnBinaryPath { get; set; } = "";
+
         // ── Output Settings ──────────────────────────────────────────────
 
         /// <summary>Video output codec: "libx264", "libx265", or "copy".</summary>

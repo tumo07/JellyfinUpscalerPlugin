@@ -195,6 +195,7 @@ namespace JellyfinUpscalerPlugin.Services
                 "lsdir-compact-x4",
                 "swinir-small-x2", "swinir-small-x4",
                 "bhi-realplksr-x4",
+                "gpu-fast-x2",
             };
 
             var modelName = options.Model?.ToLowerInvariant() ?? "";
@@ -208,7 +209,8 @@ namespace JellyfinUpscalerPlugin.Services
             bool isFast = fastModels.Contains(modelName)
                 || modelName.Contains("fsrcnn")
                 || modelName.Contains("espcn")
-                || modelName.Contains("span");
+                || modelName.Contains("span")
+                || modelName.Contains("gpu-fast");
 
             if (!isFast)
             {

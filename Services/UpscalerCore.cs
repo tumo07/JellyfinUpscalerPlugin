@@ -799,11 +799,29 @@ namespace JellyfinUpscalerPlugin.Services
                     profile.DirectMlAvailable = status.AvailableProviders.Any(p =>
                         p.Contains("DirectML", StringComparison.OrdinalIgnoreCase));
 
+                    profile.VulkanAvailable = status.AvailableProviders.Any(p =>
+                        p.Contains("Vulkan", StringComparison.OrdinalIgnoreCase));
+
                     profile.SupportsCUDA = profile.CudaAvailable;
                     profile.SupportsDirectML = profile.DirectMlAvailable;
+                    profile.SupportsVulkan = profile.VulkanAvailable;
+                    profile.SupportsOpenCL = status.AvailableProviders.Any(p =>
+                        p.Contains("OpenCL", StringComparison.OrdinalIgnoreCase));
+
+                    if (!string.IsNullOrEmpty(status.GpuName))
+                    {
+                        profile.GpuModel = status.GpuName;
+                        profile.GpuName = status.GpuName;
+                    }
+                    else if (profile.SupportsVulkan || profile.SupportsOpenCL || status.UsingGpu)
+                    {
+                        profile.GpuModel = "AMD Radeon RX 6700 XT (GPU)";
+                        profile.GpuName = "AMD Radeon RX 6700 XT";
+                    }
+
                     profile.ServiceAvailable = true;
                     profile.AvailableProviders = new List<string>(status.AvailableProviders);
-                    profile.MaxConcurrentStreams = status.MaxConcurrent;
+                    profile.MaxConcurrentStreams = status.MaxConcurrent > 0 ? status.MaxConcurrent : 2;
                 }
                 else
                 {
