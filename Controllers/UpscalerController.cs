@@ -433,6 +433,55 @@ namespace JellyfinUpscalerPlugin.Controllers
             });
         }
 
+        /// <summary>
+        /// Read player/client playback configuration (accessible to any authenticated user).
+        /// Returns settings required for real-time player playback and shader upscaling.
+        /// </summary>
+        [HttpGet("config")]
+        [Produces(MediaTypeNames.Application.Json)]
+        public async Task<ActionResult<object>> GetPlaybackConfig()
+        {
+            var config = Plugin.Instance?.Configuration ?? new PluginConfiguration();
+            bool isAvailable = false;
+            try
+            {
+                isAvailable = await _benchmarkService.IsServiceAvailableAsync();
+            }
+            catch
+            {
+                isAvailable = false;
+            }
+
+            return Ok(new
+            {
+                EnablePlugin = config.EnablePlugin,
+                Model = config.Model,
+                FavoriteModels = config.FavoriteModels,
+                ScaleFactor = config.ScaleFactor,
+                QualityLevel = config.QualityLevel,
+                HardwareAcceleration = config.HardwareAcceleration,
+                PlayerButton = config.PlayerButton,
+                Notifications = config.Notifications,
+                ButtonPosition = config.ButtonPosition,
+                AutoRetryButton = config.AutoRetryButton,
+                EnableComparisonView = config.EnableComparisonView,
+                EnablePerformanceMetrics = config.EnablePerformanceMetrics,
+                EnableRealtimeUpscaling = config.EnableRealtimeUpscaling,
+                RealtimeMode = config.RealtimeMode,
+                Anime4KPreset = config.Anime4KPreset,
+                ClientDriverUpscalingActive = config.ClientDriverUpscalingActive,
+                RealtimeTargetFps = config.RealtimeTargetFps,
+                RealtimeCaptureWidth = config.RealtimeCaptureWidth,
+                EnableAutoModelSelection = config.EnableAutoModelSelection,
+                PreferredAnimeModel = config.PreferredAnimeModel,
+                PreferredLiveActionModel = config.PreferredLiveActionModel,
+                EnableVideoFilters = config.EnableVideoFilters,
+                ActiveFilterPreset = config.ActiveFilterPreset,
+                EnableObjectMasking = config.EnableObjectMasking,
+                AiServiceAvailable = isAvailable
+            });
+        }
+
         [HttpPost("test")]
         [Authorize(Policy = "RequiresElevation")]
         [Produces(MediaTypeNames.Application.Json)]

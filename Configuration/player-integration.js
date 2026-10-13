@@ -19,6 +19,9 @@
     // Anime4K and WebGPU engines never loaded. The release query fetches them anew after
     // an update, as the index.html tag does for this script.
     function pluginScriptUrl(name) {
+        if (window.ApiClient && typeof window.ApiClient.getUrl === 'function') {
+            return window.ApiClient.getUrl('web/ConfigurationPage', { name: name, release: PLUGIN_VERSION });
+        }
         return 'configurationpage?name=' + name + '&release=' + PLUGIN_VERSION;
     }
 
@@ -245,6 +248,17 @@
             } else if (mode === 'auto') {
                 mode = this._decideTier(benchmarkResult, video);
             }
+
+            // If Server AI mode was requested but benchmark failed or server is offline, divert to local function
+            if (mode === 'server' && benchmarkResult && benchmarkResult.error) {
+                var localTier = this._shouldPreferAnime4K() ? 'anime4k' : 'lanczos';
+                console.warn('AI Upscaler RT: Server AI offline; diverting to local ' + localTier);
+                mode = localTier;
+                if (window.PlayerIntegration) {
+                    window.PlayerIntegration.showPlayerNotification('AI Server offline. Switched to local ' + PlayerIntegration._modeLabel(localTier) + ' acceleration.', 'info');
+                }
+            }
+
             if (mode === 'off') {
                 this._mode = 'off';
                 if (window.PlayerIntegration) window.PlayerIntegration.showPlayerNotification(this._reason, 'info');
@@ -286,24 +300,42 @@
             console.log('AI Upscaler RT: Stopped');
         },
 
+        _shouldPreferAnime4K: function() {
+            var curMode = (this._config && this._config.RealtimeMode || '').toLowerCase();
+            if (curMode === 'anime4k') return true;
+            if (curMode === 'lanczos' || curMode === 'webgl') return false;
+            var preset = localStorage.getItem('ai_upscaler_anime4k_preset');
+            if (window.PlayerIntegration && typeof PlayerIntegration._isAnimeMedia === 'function' && PlayerIntegration._isAnimeMedia()) return true;
+            var curModel = (this._config && this._config.Model) || '';
+            if (/anime/i.test(curModel)) return true;
+            if (preset && preset !== 'none' && curMode === 'auto') return true;
+            return false;
+        },
+
         _decideTier: function(benchmark, video) {
             if (this._config && this._config.ClientDriverUpscalingActive === true) return 'off';
             if (this._config && this._config.EnableObjectMasking === true) return 'off';
-            if (!benchmark || benchmark.error) return 'webgl';
+            var localTier = this._shouldPreferAnime4K() ? 'anime4k' : 'lanczos';
+            if (!benchmark || benchmark.error) return localTier;
             // Use the playing item's frame rate. Without one, Auto cannot prove
             // the server keeps up; prefer the client shader until it is known.
             var videoFps = Number(benchmark.videoFps);
-            if (!Number.isFinite(videoFps) || videoFps <= 0) return 'webgl';
+            if (!Number.isFinite(videoFps) || videoFps <= 0) return localTier;
             videoFps *= video.playbackRate || 1;
             if (benchmark.fps >= videoFps * 0.8) return 'server';
-            return 'webgl';
+            return localTier;
         },
 
         // --- WebGL Tier ---
         _startWebGL: function() {
+            var self = this;
             if (!window.AIUpscalerWebGL) {
-                this._loadWebGLScript(function() {
-                    RealtimeUpscaler._initWebGL();
+                this._loadWebGLScript(function(ok) {
+                    if (!ok) {
+                        console.warn('AI Upscaler RT: WebGL script load failed');
+                        return;
+                    }
+                    self._initWebGL();
                 });
                 return;
             }
@@ -311,18 +343,31 @@
         },
 
         _loadWebGLScript: function(callback) {
-            // Check if already loaded
-            if (window.AIUpscalerWebGL) { callback(); return; }
+            function resolved() { return !!window.AIUpscalerWebGL; }
+            if (resolved()) { callback(true); return; }
             if (document.querySelector('script[data-upscaler-webgl]')) {
-                setTimeout(callback, 500);
+                var attempts = 0;
+                var poll = setInterval(function() {
+                    attempts++;
+                    if (resolved()) { clearInterval(poll); callback(true); }
+                    else if (attempts >= 50) { clearInterval(poll); callback(false); }
+                }, 100);
                 return;
             }
             var script = document.createElement('script');
             script.src = pluginScriptUrl('UPSCALERWebGLShader');
             script.setAttribute('data-upscaler-webgl', '1');
-            script.onload = function() { setTimeout(callback, 100); };
+            script.onload = function() {
+                var attempts = 0;
+                var poll = setInterval(function() {
+                    attempts++;
+                    if (resolved()) { clearInterval(poll); callback(true); }
+                    else if (attempts >= 40) { clearInterval(poll); callback(false); }
+                }, 50);
+            };
             script.onerror = function() {
                 console.warn('AI Upscaler RT: Could not load WebGL shader from', script.src);
+                callback(false);
             };
             document.head.appendChild(script);
         },
@@ -338,6 +383,9 @@
                 };
                 wgl.enable();
                 this._webglInstance = wgl;
+                console.log('AI Upscaler RT: WebGL Lanczos3 started successfully');
+            } else {
+                console.warn('AI Upscaler RT: WebGL init returned false');
             }
         },
 
@@ -553,6 +601,11 @@
                     RealtimeUpscaler._updateFpsDisplay();
                 };
                 this._anime4kInstance.attachVideo(this._videoElement, this._anime4kCanvas);
+                if (!this._anime4kInstance.gl) {
+                    console.warn('AI Upscaler RT: Anime4K attachVideo failed (WebGL extensions missing), falling back to Lanczos');
+                    this._fallbackToLanczos();
+                    return;
+                }
                 this._anime4kInstance.start();
                 console.log('AI Upscaler RT: Anime4K (' + profileLabel + ') started');
             } catch (e) {
@@ -750,10 +803,23 @@
                         self._lowFpsStart = 0;
                     }
                 }
+                if (why === 'server unresponsive') {
+                    console.warn('AI Upscaler RT: Server unresponsive for 10s, falling back to local acceleration');
+                    self._stopServer();
+                    var fallbackMode = self._shouldPreferAnime4K() ? 'anime4k' : 'lanczos';
+                    self._mode = fallbackMode;
+                    self._updateButtonIndicator(fallbackMode);
+                    if (window.PlayerIntegration) {
+                        window.PlayerIntegration.showPlayerNotification('AI Server unresponsive. Switched to local ' + PlayerIntegration._modeLabel(fallbackMode) + ' acceleration.', 'warning');
+                    }
+                    if (fallbackMode === 'anime4k') {
+                        self._startAnime4K();
+                    } else {
+                        self._startWebGL();
+                    }
+                    return;
+                }
                 if (why) {
-                    // We used to automatically fallback to Lanczos here if the server dropped below half framerate.
-                    // However, users complained this forced them off their selected engine unexpectedly when testing heavy models or 720p streams.
-                    // We now just show a warning notification but KEEP them on the Server AI engine.
                     if (window.PlayerIntegration && !self._fallbackNotified) {
                         window.PlayerIntegration.showPlayerNotification('Server AI running at ' + fps + ' fps', 'info');
                         self._fallbackNotified = true;
@@ -1059,7 +1125,7 @@
             var dot = document.createElement('span');
             dot.className = 'ai-rt-dot';
             dot.style.cssText = 'position:absolute;top:2px;right:2px;width:8px;height:8px;border-radius:50%;';
-            dot.style.background = mode === 'server' ? '#34d399' : '#60a5fa';
+            dot.style.background = mode === 'server' ? '#34d399' : (mode === 'anime4k' ? '#f472b6' : '#60a5fa');
             btn.style.position = 'relative';
             btn.appendChild(dot);
         },
@@ -1184,6 +1250,10 @@
                     var btn = document.getElementById('aiUpscalerButton');
                     if (!btn || !target || btn.parentElement !== target.container) {
                         self.injectPlayerButton();
+                    }
+                    var v = self.findVideoElement();
+                    if (v && window.PipSubtitleManager) {
+                        window.PipSubtitleManager.attachToVideo(v);
                     }
                 } else {
                     self._stopWatchdog();
@@ -1402,13 +1472,49 @@
                 return Promise.resolve(this._cachedConfig);
             }
             if (window.ApiClient) {
-                return window.ApiClient.getPluginConfiguration(PLUGIN_ID).then(function(config) {
+                var url = ApiClient.getUrl('Upscaler/config');
+                var fetchConfig = (ApiClient.ajax ?
+                    ApiClient.ajax({ type: 'GET', url: url, dataType: 'json' }) :
+                    fetch(url, { headers: { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' } }).then(function(r) { return r.json(); }));
+
+                return fetchConfig.then(function(config) {
                     PlayerIntegration._cachedConfig = config;
                     PlayerIntegration._configCacheTime = Date.now();
                     return config;
+                }).catch(function(err) {
+                    return window.ApiClient.getPluginConfiguration(PLUGIN_ID)
+                        .then(function(config) {
+                            PlayerIntegration._cachedConfig = config;
+                            PlayerIntegration._configCacheTime = Date.now();
+                            return config;
+                        })
+                        .catch(function() {
+                            var fallbackConfig = {
+                                EnablePlugin: true,
+                                EnableRealtimeUpscaling: true,
+                                RealtimeMode: 'auto',
+                                Anime4KPreset: 'mode-a',
+                                Model: 'ncnn-realesrgan-anime-x2',
+                                ScaleFactor: 2,
+                                HardwareAcceleration: true,
+                                AiServiceAvailable: false
+                            };
+                            PlayerIntegration._cachedConfig = fallbackConfig;
+                            PlayerIntegration._configCacheTime = Date.now();
+                            return fallbackConfig;
+                        });
                 });
             }
-            return Promise.resolve({});
+            return Promise.resolve({
+                EnablePlugin: true,
+                EnableRealtimeUpscaling: true,
+                RealtimeMode: 'auto',
+                Anime4KPreset: 'mode-a',
+                Model: 'ncnn-realesrgan-anime-x2',
+                ScaleFactor: 2,
+                HardwareAcceleration: true,
+                AiServiceAvailable: false
+            });
         },
 
         updatePluginConfig: function(updates) {
@@ -1417,7 +1523,11 @@
                 var newConfig = Object.assign({}, config, updates);
                 PlayerIntegration._cachedConfig = newConfig;
                 PlayerIntegration._configCacheTime = Date.now();
-                return window.ApiClient.updatePluginConfiguration(PLUGIN_ID, newConfig);
+                return window.ApiClient.updatePluginConfiguration(PLUGIN_ID, newConfig)
+                    .catch(function(err) {
+                        console.warn('AI Upscaler: Server config update skipped for user:', err && (err.status || err.message || err));
+                        return newConfig;
+                    });
             });
         },
 
@@ -2179,14 +2289,14 @@
                             PlayerIntegration.updatePluginConfig({ EnableRealtimeUpscaling: false });
                             PlayerIntegration.showPlayerNotification('Real-time upscaling stopped', 'warning');
                         } else {
-                            PlayerIntegration.updatePluginConfig({ EnableRealtimeUpscaling: true }).then(function() { PlayerIntegration.startRealtimeUpscaling(); });
+                            PlayerIntegration.updatePluginConfig({ EnableRealtimeUpscaling: true, EnablePlugin: true }).then(function() { PlayerIntegration.startRealtimeUpscaling(); });
                             PlayerIntegration.showPlayerNotification('Real-time upscaling starting...', 'success');
                         }
                         menu.remove();
                         PlayerIntegration._cleanupMenu();
                     } else if (action === 'rt-switch') {
                         if (RealtimeUpscaler._active) {
-                            var newMode = RealtimeUpscaler._mode === 'server' ? 'webgl' : 'server';
+                            var newMode = RealtimeUpscaler._mode === 'server' ? 'lanczos' : 'server';
                             RealtimeUpscaler.stop();
                             var video = PlayerIntegration.findVideoElement();
                             if (video) {
@@ -3274,6 +3384,7 @@
                 return ApiClient.getItem(ApiClient.getCurrentUserId(), ref.itemId);
             }).then(function(item) {
                 if (!item) return null;
+                PlayerIntegration._lastPlayingItem = item;
                 // An item with several versions lists them all; read the one that plays.
                 var sources = item.MediaSources || [];
                 var source = null;
@@ -3286,34 +3397,66 @@
             }).catch(function() { return null; });
         },
 
+        _isAnimeMedia: function() {
+            var item = this._lastPlayingItem;
+            if (!item) return false;
+            var genres = (item.Genres || []).join(' ').toLowerCase();
+            var name = ((item.Name || '') + ' ' + (item.SeriesName || '')).toLowerCase();
+            return /anime|animation|cartoon/i.test(genres) || /anime/i.test(name);
+        },
+
         _startRtWithConfig: function(video, config) {
-                RealtimeUpscaler.stop();
-                var generation = RealtimeUpscaler._generation;
-                if (config.ClientDriverUpscalingActive === true && config.EnableObjectMasking !== true) {
-                    RealtimeUpscaler.start(video, config, null);
-                    return Promise.resolve();
-                }
-                return this._readPlayingVideoStream(video).then(function(stream) {
+            RealtimeUpscaler.stop();
+            var generation = RealtimeUpscaler._generation;
+            var mode = (config.RealtimeMode || 'auto').toLowerCase();
+            if (mode === 'webgl') mode = 'lanczos';
+
+            // Fast path: Client driver upscaling
+            if (config.ClientDriverUpscalingActive === true && config.EnableObjectMasking !== true) {
+                RealtimeUpscaler.start(video, config, null);
+                return Promise.resolve();
+            }
+
+            // Fast path: Pure client-side shaders (Anime4K, WebGL Lanczos3, WebGPU AI)
+            // These run entirely in the browser on <video> canvas. They do NOT require
+            // the Python/Docker AI server, do NOT require server stream probing, and work
+            // on all SDR/HDR browser-rendered media.
+            if (['anime4k', 'lanczos', 'ai-webgpu'].indexOf(mode) !== -1 && config.EnableObjectMasking !== true) {
+                RealtimeUpscaler.start(video, config, null);
+                return Promise.resolve();
+            }
+
+            // Fast path: Pure client-side shaders when backend AI server is offline
+            if (config.AiServiceAvailable === false && config.EnableObjectMasking !== true) {
+                var localTier = RealtimeUpscaler._shouldPreferAnime4K() ? 'anime4k' : 'lanczos';
+                console.log('AI Upscaler RT: Backend AI offline; activating local ' + PlayerIntegration._modeLabel(localTier) + ' acceleration');
+                var offlineConfig = Object.assign({}, config, { RealtimeMode: localTier });
+                RealtimeUpscaler.start(video, offlineConfig, { error: 'server offline' });
+                return Promise.resolve();
+            }
+
+            return this._readPlayingVideoStream(video).then(function(stream) {
                 if (generation !== RealtimeUpscaler._generation) return;
-                if (!stream || PlayerIntegration._isHdrStream(stream)) {
-                    RealtimeUpscaler._mode = 'off';
-                    RealtimeUpscaler._reason = !stream ? 'Video color metadata unavailable; realtime processing cannot be validated' :
-                        'HDR realtime and masking are not supported. Use the PQ RGB16 batch pipeline; HLG is not supported.';
-                    PlayerIntegration.showPlayerNotification(RealtimeUpscaler._reason, 'warning');
-                    return;
-                }
-                var mode = (config.RealtimeMode || 'auto').toLowerCase();
 
-                // Guards apply before model warmup, recommendation or benchmark work.
-                if (config.ClientDriverUpscalingActive === true || config.EnableObjectMasking === true ||
-                    ['auto', 'server'].indexOf(mode) === -1) {
-                    RealtimeUpscaler.start(video, config, null);
-                    return;
+                var isHdr = stream ? PlayerIntegration._isHdrStream(stream) : false;
+                if (isHdr) {
+                    if (config.EnableObjectMasking === true) {
+                        RealtimeUpscaler._mode = 'off';
+                        RealtimeUpscaler._reason = 'HDR masking is not supported.';
+                        PlayerIntegration.showPlayerNotification(RealtimeUpscaler._reason, 'warning');
+                        return;
+                    }
+                    if (mode === 'server') {
+                        // Server AI cannot process HDR frames, but local WebGL acceleration handles it fine.
+                        var fallbackMode = RealtimeUpscaler._shouldPreferAnime4K() ? 'anime4k' : 'lanczos';
+                        PlayerIntegration.showPlayerNotification('HDR detected: Server AI unavailable. Running local ' + PlayerIntegration._modeLabel(fallbackMode) + ' acceleration.', 'info');
+                        RealtimeUpscaler.start(video, Object.assign({}, config, { RealtimeMode: fallbackMode }), null);
+                        return;
+                    }
                 }
 
-                // Auto + Server modes require an active server-side model before the
-                // benchmark (otherwise /benchmark-frame returns 400 "No model loaded",
-                // the auto-tier picks WebGL, and server-mode never engages).
+                // Auto + Server modes attempt to connect to server AI.
+                // If server is offline, immediately fall back to local functions (Anime4K / WebGL Lanczos3).
                 var startup = new AbortController();
                 RealtimeUpscaler._startupController = startup;
                 function current() { return generation === RealtimeUpscaler._generation && !startup.signal.aborted; }
@@ -3332,6 +3475,15 @@
                 }
                 var authHeaders = { 'Authorization': 'MediaBrowser Token="' + ApiClient.accessToken() + '"' };
 
+                var fallbackToLocal = function(err) {
+                    if (!current()) return;
+                    console.warn('AI Upscaler RT: AI server unavailable, running local acceleration', err);
+                    var fallbackTier = RealtimeUpscaler._shouldPreferAnime4K() ? 'anime4k' : 'lanczos';
+                    PlayerIntegration.showPlayerNotification('AI Server offline. Running local ' + PlayerIntegration._modeLabel(fallbackTier) + ' acceleration.', 'info');
+                    var fallbackConfig = Object.assign({}, config, { RealtimeMode: fallbackTier });
+                    RealtimeUpscaler.start(video, fallbackConfig, { error: 'server offline' });
+                };
+
                 var runBenchmarkAndStart = function() {
                     if (!current()) return;
                     fetch(ApiClient.getUrl('Upscaler/benchmark-frame') + '?width=' + captureW + '&height=' + captureH, {
@@ -3344,9 +3496,7 @@
                             RealtimeUpscaler.start(video, config, bench);
                         })
                         .catch(function(err) {
-                            if (!current()) return;
-                            console.warn('AI Upscaler RT: Benchmark failed, using WebGL', err);
-                            RealtimeUpscaler.start(video, config, { error: 'benchmark failed' });
+                            fallbackToLocal(err);
                         });
                 };
 
@@ -3356,15 +3506,14 @@
                 })
                     .then(function(r) {
                         if (!r.ok) {
-                            console.warn('AI Upscaler RT: Model preload failed (HTTP ' + r.status + '), running benchmark anyway');
+                            console.warn('AI Upscaler RT: Model preload returned HTTP ' + r.status + ', checking benchmark');
                         }
                         runBenchmarkAndStart();
                     })
                     .catch(function(err) {
-                        console.warn('AI Upscaler RT: Model preload network error, running benchmark anyway', err);
-                        runBenchmarkAndStart();
+                        fallbackToLocal(err);
                     });
-                });
+            });
         },
 
         addKeyboardShortcuts: function() {
@@ -3660,13 +3809,1077 @@
                 '.ai-notif--success::before{background:#3ddc97}',
                 '.ai-notif--warning::before{background:#f5b94a}',
                 '.ai-notif--error::before{background:#ff6b6b}',
-                '@keyframes aiNotifIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}'
+                '@keyframes aiNotifIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}',
+                /* Picture-in-Picture Subtitle & Miniplayer Isolation */
+                'body.ai-pip-active .videoSubtitles,body.ai-pip-active .libassjs-canvas-parent,body.ai-pip-active .videoPlayerContainer canvas:not(#upscaler-canvas){opacity:0!important;pointer-events:none!important}',
+                'body.ai-pip-active video.htmlvideoplayer::cue{color:transparent!important;background:transparent!important;text-shadow:none!important;opacity:0!important}',
+                'body.ai-pip-active video.htmlvideoplayer::-webkit-media-text-track-container,body.ai-pip-active video.htmlvideoplayer::-webkit-media-text-track-display{opacity:0!important;visibility:hidden!important;display:none!important}',
+                'body.ai-pip-active video.htmlvideoplayer,body.ai-pip-active #upscaler-canvas{opacity:0!important}',
+                '.ai-pip-placeholder{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:#0a0c10;color:rgba(255,255,255,0.65);font:600 15px/1.4 "Noto Sans",-apple-system,"Segoe UI",system-ui,sans-serif;z-index:1;pointer-events:none}'
             ].join('');
 
             document.head.appendChild(styles);
             this._stylesInjected = true;
         }
     };
+
+    // Picture-in-Picture Subtitle & Upscaler Compositor
+    // Solves jellyfin-web #2480 & #7444 client-side without server subtitle burn-in:
+    // composites video (or WebGL upscaled canvas) + ASS/SSA/PGS canvases + SRT/VTT text
+    // into the floating PiP miniplayer and hides duplicate subtitles in the main tab.
+    const PipSubtitleManager = {
+        _mainVideo: null,
+        _pipCanvas: null,
+        _pipCtx: null,
+        _pipVideo: null,
+        _pipStream: null,
+        _keepAliveStream: null,
+        _pipActive: false,
+        _worker: null,
+        _rvfcId: null,
+        _syncingPlayState: false,
+        _origRequestPiP: null,
+        _subtitleOffsetSec: 0,
+        _hasSubtitleOffsetOverride: false,
+        _lastBgTimeUpdateMs: 0,
+        _bgRafCallbacks: [],
+        _appearanceCache: null,
+        _appearanceCacheTime: 0,
+
+        init: function() {
+            if (typeof HTMLVideoElement === 'undefined' || !HTMLVideoElement.prototype ||
+                !HTMLVideoElement.prototype.requestPictureInPicture ||
+                HTMLVideoElement.prototype._aiPipPatched) {
+                return;
+            }
+            var self = this;
+            this._origRequestPiP = HTMLVideoElement.prototype.requestPictureInPicture;
+            HTMLVideoElement.prototype._aiPipPatched = true;
+
+            HTMLVideoElement.prototype.requestPictureInPicture = function() {
+                if (this._isAiPipProxy) {
+                    return self._origRequestPiP.apply(this, arguments);
+                }
+                return self.enterPip(this);
+            };
+
+            // Capture original unshifted VTTCue timestamps when Jellyfin adds cues so
+            // subtitle time offsets work reliably across positive/negative shifts and while paused.
+            if (typeof TextTrack !== 'undefined' && TextTrack.prototype && TextTrack.prototype.addCue && !TextTrack.prototype._aiAddCuePatched) {
+                var origAddCue = TextTrack.prototype.addCue;
+                TextTrack.prototype._aiAddCuePatched = true;
+                TextTrack.prototype.addCue = function(cue) {
+                    if (cue && typeof cue._aiOrigStart !== 'number') {
+                        cue._aiOrigStart = cue.startTime;
+                        cue._aiOrigEnd = cue.endTime;
+                    }
+                    // Jellyfin calls resetSubtitleOffset() whenever a new track's cues are populated
+                    self._subtitleOffsetSec = 0;
+                    self._hasSubtitleOffsetOverride = false;
+                    return origAddCue.apply(this, arguments);
+                };
+            }
+
+            // Keep requestAnimationFrame callbacks (SubtitlesOctopus ASS/SSA, libbitsub PGS, WebGL upscaler)
+            // running when the main tab is hidden/minimized while PiP is active.
+            if (typeof window !== 'undefined' && window.requestAnimationFrame && !window._aiRafPatched) {
+                var origRaf = window.requestAnimationFrame.bind(window);
+                window._aiRafPatched = true;
+                window.requestAnimationFrame = function(cb) {
+                    if (self._pipActive && document.hidden && typeof cb === 'function') {
+                        self._bgRafCallbacks.push(cb);
+                    }
+                    return origRaf(cb);
+                };
+            }
+
+            this._bindSubtitleOffsetListeners();
+        },
+
+        _bindSubtitleOffsetListeners: function() {
+            if (typeof document === 'undefined' || this._offsetListenersBound) return;
+            this._offsetListenersBound = true;
+            var self = this;
+
+            var handleOffsetControl = function(target, isLiveInput) {
+                if (!target || !target.classList) return;
+                if (target.classList.contains('subtitleSyncSlider')) {
+                    var val = parseFloat(target.value);
+                    if (!isNaN(val)) {
+                        self._subtitleOffsetSec = val;
+                        self._hasSubtitleOffsetOverride = true;
+                    }
+                    // Jellyfin's SubtitleSync only binds 'change' (mouseup); forward 'input' to 'change'
+                    // so dragging the slider updates Jellyfin's offset & label in real time.
+                    if (isLiveInput) {
+                        try {
+                            target.dispatchEvent(new Event('change'));
+                        } catch (e) {}
+                    }
+                    if (self._pipActive) {
+                        self.renderFrame();
+                    }
+                    // After Jellyfin's 100ms debounced _setSubtitleOffset runs, fire timeupdate
+                    // so custom .videoSubtitlesInner DOM also refreshes even when paused.
+                    setTimeout(function() {
+                        if (self._mainVideo) {
+                            try { self._mainVideo.dispatchEvent(new Event('timeupdate')); } catch (e) {}
+                        }
+                        if (self._pipActive) {
+                            self.renderFrame();
+                        }
+                    }, 115);
+                }
+            };
+
+            document.addEventListener('input', function(e) {
+                handleOffsetControl(e && e.target, true);
+            }, true);
+
+            document.addEventListener('change', function(e) {
+                handleOffsetControl(e && e.target, false);
+            }, true);
+
+            document.addEventListener('keydown', function(e) {
+                var t = e && e.target;
+                if (t && t.classList && t.classList.contains('subtitleSyncTextField') && e.key === 'Enter') {
+                    setTimeout(function() {
+                        var slider = document.querySelector('.subtitleSyncSlider');
+                        if (slider) {
+                            var val = parseFloat(slider.value);
+                            if (!isNaN(val)) {
+                                self._subtitleOffsetSec = val;
+                                self._hasSubtitleOffsetOverride = true;
+                            }
+                        }
+                        if (self._mainVideo) {
+                            try { self._mainVideo.dispatchEvent(new Event('timeupdate')); } catch (err) {}
+                        }
+                        if (self._pipActive) {
+                            self.renderFrame();
+                        }
+                    }, 120);
+                }
+            }, true);
+        },
+
+        _getCurrentSubtitleOffsetSeconds: function() {
+            var slider = document.querySelector('.subtitleSyncSlider');
+            if (slider) {
+                var val = parseFloat(slider.value);
+                if (!isNaN(val)) {
+                    var container = document.querySelector('.subtitleSyncContainer');
+                    var isVisible = container && !container.classList.contains('hide');
+                    if (isVisible || this._hasSubtitleOffsetOverride || val !== 0) {
+                        this._subtitleOffsetSec = val;
+                        return val;
+                    }
+                }
+            }
+            return this._subtitleOffsetSec || 0;
+        },
+
+        _getSubtitleAppearance: function() {
+            var now = Date.now();
+            if (this._appearanceCache && (now - this._appearanceCacheTime) < 2000) {
+                return this._appearanceCache;
+            }
+            var result = { verticalPosition: -2, fontScale: 1.0 };
+            try {
+                if (typeof localStorage !== 'undefined') {
+                    for (var i = 0; i < localStorage.length; i++) {
+                        var k = localStorage.key(i);
+                        if (k && k.toLowerCase().indexOf('subtitleappearance') !== -1) {
+                            var raw = localStorage.getItem(k);
+                            if (raw) {
+                                var parsed = JSON.parse(raw);
+                                if (parsed && typeof parsed === 'object') {
+                                    var vp = parseInt(parsed.verticalPosition, 10);
+                                    if (!isNaN(vp)) {
+                                        result.verticalPosition = vp;
+                                    }
+                                    var ts = String(parsed.textSize || '').toLowerCase();
+                                    if (ts === 'small') result.fontScale = 0.8;
+                                    else if (ts === 'medium') result.fontScale = 1.0;
+                                    else if (ts === 'large') result.fontScale = 1.18;
+                                    else if (ts === 'larger') result.fontScale = 1.35;
+                                    else if (ts === 'extralarge') result.fontScale = 1.52;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            } catch (e) {}
+            this._appearanceCache = result;
+            this._appearanceCacheTime = now;
+            return result;
+        },
+
+        _ensureElements: function(mainVideo) {
+            var self = this;
+            if (!this._pipCanvas) {
+                this._pipCanvas = document.createElement('canvas');
+                this._pipCanvas.width = 1280;
+                this._pipCanvas.height = 720;
+                this._pipCtx = this._pipCanvas.getContext('2d', { alpha: false });
+            }
+            if (!this._pipVideo) {
+                var pv = document.createElement('video');
+                pv._isAiPipProxy = true;
+                pv.muted = true;
+                pv.playsInline = true;
+                pv.setAttribute('playsinline', '');
+                pv.setAttribute('webkit-playsinline', '');
+                pv.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:2px;height:2px;opacity:0;pointer-events:none;z-index:-1;';
+                if (document.body) {
+                    document.body.appendChild(pv);
+                }
+                pv.addEventListener('leavepictureinpicture', function() {
+                    self._onLeavePip();
+                });
+                pv.addEventListener('play', function() {
+                    if (self._syncingPlayState || !self._pipActive || !self._mainVideo) return;
+                    if (self._mainVideo.paused) {
+                        self._mainVideo.play().catch(function() {});
+                    }
+                });
+                pv.addEventListener('pause', function() {
+                    if (self._syncingPlayState || !self._pipActive || !self._mainVideo) return;
+                    // Delay slightly: closing PiP window via 'X' pauses pv right before firing leavepictureinpicture
+                    setTimeout(function() {
+                        if (self._pipActive && document.pictureInPictureElement === pv && self._mainVideo && !self._mainVideo.paused) {
+                            self._mainVideo.pause();
+                        }
+                    }, 90);
+                });
+
+                // Mock duration, currentTime, seekable, playbackRate and paused on _pipVideo proxy
+                // so browser engines never categorize the canvas MediaStream as an indefinite LIVE broadcast.
+                try {
+                    Object.defineProperty(pv, 'duration', {
+                        get: function() {
+                            if (self._mainVideo && Number.isFinite(self._mainVideo.duration) && self._mainVideo.duration > 0) {
+                                return self._mainVideo.duration;
+                            }
+                            return 0;
+                        },
+                        configurable: true
+                    });
+                    Object.defineProperty(pv, 'currentTime', {
+                        get: function() {
+                            return (self._mainVideo && self._mainVideo.currentTime) || 0;
+                        },
+                        set: function(val) {
+                            if (self._mainVideo && Number.isFinite(val)) {
+                                self._mainVideo.currentTime = val;
+                                self._updateMediaSessionPosition(self._mainVideo);
+                                if (self._pipActive) {
+                                    self.renderFrame();
+                                }
+                            }
+                        },
+                        configurable: true
+                    });
+                    Object.defineProperty(pv, 'seekable', {
+                        get: function() {
+                            if (self._mainVideo && self._mainVideo.seekable && self._mainVideo.seekable.length > 0) {
+                                return self._mainVideo.seekable;
+                            }
+                            var dur = (self._mainVideo && Number.isFinite(self._mainVideo.duration) && self._mainVideo.duration > 0) ? self._mainVideo.duration : 0;
+                            return {
+                                length: dur > 0 ? 1 : 0,
+                                start: function(i) { return 0; },
+                                end: function(i) { return dur; }
+                            };
+                        },
+                        configurable: true
+                    });
+                    Object.defineProperty(pv, 'playbackRate', {
+                        get: function() {
+                            return (self._mainVideo && self._mainVideo.playbackRate) || 1.0;
+                        },
+                        set: function(val) {
+                            if (self._mainVideo && Number.isFinite(val)) {
+                                self._mainVideo.playbackRate = val;
+                                self._updateMediaSessionPosition(self._mainVideo);
+                            }
+                        },
+                        configurable: true
+                    });
+                    Object.defineProperty(pv, 'paused', {
+                        get: function() {
+                            return self._mainVideo ? self._mainVideo.paused : true;
+                        },
+                        configurable: true
+                    });
+                    pv.fastSeek = function(target) {
+                        if (self._mainVideo && Number.isFinite(target)) {
+                            if (typeof self._mainVideo.fastSeek === 'function') {
+                                self._mainVideo.fastSeek(target);
+                            } else {
+                                self._mainVideo.currentTime = target;
+                            }
+                            self._updateMediaSessionPosition(self._mainVideo);
+                            if (self._pipActive) self.renderFrame();
+                        }
+                    };
+                } catch (e) {}
+
+                this._pipVideo = pv;
+            }
+            if (mainVideo && this._mainVideo !== mainVideo) {
+                this._mainVideo = mainVideo;
+                this._subtitleOffsetSec = 0;
+                this._hasSubtitleOffsetOverride = false;
+                mainVideo.addEventListener('play', function() {
+                    if (!self._pipActive || !self._pipVideo) return;
+                    self._syncingPlayState = true;
+                    self._pipVideo.play().catch(function() {}).finally(function() { self._syncingPlayState = false; });
+                    self._updateMediaSessionPosition(mainVideo);
+                });
+                mainVideo.addEventListener('pause', function() {
+                    if (!self._pipActive || !self._pipVideo) return;
+                    self._syncingPlayState = true;
+                    try { self._pipVideo.pause(); } catch (e) {}
+                    self._syncingPlayState = false;
+                    self._updateMediaSessionPosition(mainVideo);
+                    self.renderFrame();
+                });
+                mainVideo.addEventListener('seeked', function() {
+                    if (self._pipActive) {
+                        self._updateMediaSessionPosition(mainVideo);
+                        if (self._pipVideo) {
+                            try { self._pipVideo.dispatchEvent(new Event('seeked')); } catch (e) {}
+                        }
+                        self.renderFrame();
+                    }
+                });
+                mainVideo.addEventListener('seeking', function() {
+                    if (self._pipActive) {
+                        self._updateMediaSessionPosition(mainVideo);
+                        if (self._pipVideo) {
+                            try { self._pipVideo.dispatchEvent(new Event('seeking')); } catch (e) {}
+                        }
+                    }
+                });
+                mainVideo.addEventListener('timeupdate', function() {
+                    if (self._pipActive) {
+                        self._updateMediaSessionPosition(mainVideo);
+                        if (self._pipVideo) {
+                            try { self._pipVideo.dispatchEvent(new Event('timeupdate')); } catch (e) {}
+                        }
+                        self.renderFrame();
+                    }
+                });
+                mainVideo.addEventListener('ratechange', function() {
+                    if (self._pipActive) {
+                        self._updateMediaSessionPosition(mainVideo);
+                        if (self._pipVideo) {
+                            try { self._pipVideo.dispatchEvent(new Event('ratechange')); } catch (e) {}
+                        }
+                    }
+                });
+                mainVideo.addEventListener('durationchange', function() {
+                    if (self._pipActive) {
+                        self._updateMediaSessionPosition(mainVideo);
+                        if (self._pipVideo) {
+                            try { self._pipVideo.dispatchEvent(new Event('durationchange')); } catch (e) {}
+                        }
+                    }
+                });
+                mainVideo.addEventListener('loadedmetadata', function() {
+                    if (self._pipActive) {
+                        self._updateMediaSessionMetadata();
+                        self._updateMediaSessionPosition(mainVideo);
+                        if (self._pipVideo) {
+                            try { self._pipVideo.dispatchEvent(new Event('durationchange')); } catch (e) {}
+                            try { self._pipVideo.dispatchEvent(new Event('timeupdate')); } catch (e) {}
+                        }
+                    }
+                });
+            }
+        },
+
+        attachToVideo: function(mainVideo) {
+            if (!mainVideo || mainVideo._aiPipProxy || mainVideo._isAiPipProxy) return;
+            var self = this;
+            this._ensureElements(mainVideo);
+            if (mainVideo._aiPipAttached) return;
+            mainVideo._aiPipAttached = true;
+
+            var prewarm = function() {
+                if (!self._pipCanvas || !self._pipVideo) return;
+                self.renderFrame();
+                if (!self._pipStream) {
+                    var streamFn = self._pipCanvas.captureStream || self._pipCanvas.mozCaptureStream;
+                    if (streamFn) {
+                        self._pipStream = streamFn.call(self._pipCanvas, 30);
+                        self._pipVideo.srcObject = self._pipStream;
+                        self._syncingPlayState = true;
+                        self._pipVideo.play().then(function() {
+                            if (!self._pipActive) {
+                                try { self._pipVideo.pause(); } catch (e) {}
+                            }
+                        }).catch(function() {}).finally(function() {
+                            self._syncingPlayState = false;
+                        });
+                    }
+                }
+            };
+
+            if (mainVideo.readyState >= 2) {
+                prewarm();
+            } else {
+                mainVideo.addEventListener('loadeddata', prewarm, { once: true });
+            }
+        },
+
+        enterPip: function(mainVideo) {
+            var self = this;
+            this._ensureElements(mainVideo);
+            this.renderFrame();
+            this._setupMediaSession(mainVideo);
+            this._updateMediaSessionPosition(mainVideo);
+
+            if (!this._pipStream) {
+                var streamFn = this._pipCanvas.captureStream || this._pipCanvas.mozCaptureStream;
+                if (!streamFn) {
+                    return this._origRequestPiP.call(mainVideo);
+                }
+                this._pipStream = streamFn.call(this._pipCanvas, 60);
+                this._pipVideo.srcObject = this._pipStream;
+            }
+
+            this._syncingPlayState = true;
+            var playPromise = this._pipVideo.play();
+            if (playPromise && playPromise.catch) {
+                playPromise.catch(function() {});
+            }
+            this._syncingPlayState = false;
+
+            var startPip = function() {
+                return self._origRequestPiP.call(self._pipVideo).then(function(pipWin) {
+                    self._onEnterPip(mainVideo);
+                    return pipWin;
+                }).catch(function(err) {
+                    // Fallback to standard PiP if proxy fails
+                    return self._origRequestPiP.call(mainVideo);
+                });
+            };
+
+            if (this._pipVideo.readyState >= 1) {
+                return startPip();
+            }
+            return new Promise(function(resolve, reject) {
+                var onMeta = function() {
+                    clearTimeout(timer);
+                    startPip().then(resolve, reject);
+                };
+                var timer = setTimeout(function() {
+                    self._pipVideo.removeEventListener('loadedmetadata', onMeta);
+                    startPip().then(resolve, reject);
+                }, 250);
+                self._pipVideo.addEventListener('loadedmetadata', onMeta, { once: true });
+            });
+        },
+
+        _updateMediaSessionMetadata: function() {
+            if (typeof navigator === 'undefined' || !navigator.mediaSession || typeof MediaMetadata === 'undefined') {
+                return;
+            }
+            try {
+                var title = '';
+                var sub = '';
+                var titleElem = document.querySelector('.osdTitle');
+                if (titleElem && titleElem.textContent) {
+                    title = titleElem.textContent.trim();
+                }
+                var subElem = document.querySelector('.osdSecondaryMediaInfo');
+                if (subElem && subElem.textContent) {
+                    sub = subElem.textContent.trim();
+                }
+                if (!title && typeof document !== 'undefined' && document.title) {
+                    title = document.title.replace(/\s*-\s*Jellyfin\s*$/i, '').trim();
+                }
+                if (!title) {
+                    title = 'Jellyfin Video';
+                }
+
+                var artwork = [];
+                var posterImg = document.querySelector('.nowPlayingImage, .detailImage img, .cardImageContainer img');
+                if (posterImg && posterImg.src) {
+                    artwork.push({ src: posterImg.src, sizes: '512x512', type: 'image/jpeg' });
+                }
+
+                navigator.mediaSession.metadata = new MediaMetadata({
+                    title: title,
+                    artist: sub || 'Jellyfin',
+                    album: sub || '',
+                    artwork: artwork
+                });
+            } catch (e) {}
+        },
+
+        _updateMediaSessionPosition: function(mainVideo) {
+            if (typeof navigator === 'undefined' || !navigator.mediaSession || typeof navigator.mediaSession.setPositionState !== 'function') {
+                return;
+            }
+            var mv = mainVideo || this._mainVideo;
+            if (!mv) return;
+
+            var dur = mv.duration;
+            if (typeof dur !== 'number' || !Number.isFinite(dur) || dur <= 0) {
+                return;
+            }
+
+            var pos = mv.currentTime;
+            if (typeof pos !== 'number' || !Number.isFinite(pos)) {
+                pos = 0;
+            }
+            pos = Math.max(0, Math.min(pos, dur));
+
+            var rate = mv.playbackRate;
+            if (typeof rate !== 'number' || !Number.isFinite(rate) || rate <= 0) {
+                rate = 1.0;
+            }
+
+            try {
+                navigator.mediaSession.setPositionState({
+                    duration: dur,
+                    playbackRate: rate,
+                    position: pos
+                });
+                navigator.mediaSession.playbackState = mv.paused ? 'paused' : 'playing';
+            } catch (e) {}
+        },
+
+        _setupMediaSession: function(mainVideo) {
+            if (typeof navigator === 'undefined' || !navigator.mediaSession) return;
+            var self = this;
+            var mv = mainVideo || this._mainVideo;
+
+            var setHandler = function(action, fn) {
+                if (typeof navigator.mediaSession.setActionHandler === 'function') {
+                    try {
+                        navigator.mediaSession.setActionHandler(action, fn);
+                    } catch (e) {}
+                }
+            };
+
+            setHandler('play', function() {
+                if (self._mainVideo && self._mainVideo.paused) {
+                    self._mainVideo.play().catch(function() {});
+                }
+                if (self._pipVideo && self._pipVideo.paused) {
+                    try { self._pipVideo.play().catch(function() {}); } catch (e) {}
+                }
+                if (navigator.mediaSession) {
+                    try { navigator.mediaSession.playbackState = 'playing'; } catch (e) {}
+                }
+            });
+
+            setHandler('pause', function() {
+                if (self._mainVideo && !self._mainVideo.paused) {
+                    self._mainVideo.pause();
+                }
+                if (self._pipVideo && !self._pipVideo.paused) {
+                    try { self._pipVideo.pause(); } catch (e) {}
+                }
+                if (navigator.mediaSession) {
+                    try { navigator.mediaSession.playbackState = 'paused'; } catch (e) {}
+                }
+            });
+
+            setHandler('seekto', function(details) {
+                if (!self._mainVideo || !details || typeof details.seekTime !== 'number' || !Number.isFinite(details.seekTime)) return;
+                var dur = Number.isFinite(self._mainVideo.duration) && self._mainVideo.duration > 0 ? self._mainVideo.duration : details.seekTime;
+                var target = Math.max(0, Math.min(details.seekTime, dur));
+                if (details.fastSeek && typeof self._mainVideo.fastSeek === 'function') {
+                    self._mainVideo.fastSeek(target);
+                } else {
+                    self._mainVideo.currentTime = target;
+                }
+                self._updateMediaSessionPosition(self._mainVideo);
+                if (self._pipVideo) {
+                    try { self._pipVideo.dispatchEvent(new Event('timeupdate')); } catch (e) {}
+                }
+                if (self._pipActive) {
+                    self.renderFrame();
+                }
+            });
+
+            setHandler('seekforward', function(details) {
+                if (!self._mainVideo) return;
+                var step = (details && typeof details.seekOffset === 'number' && details.seekOffset > 0) ? details.seekOffset : 10;
+                var dur = Number.isFinite(self._mainVideo.duration) && self._mainVideo.duration > 0 ? self._mainVideo.duration : Infinity;
+                var target = Math.min(dur, (self._mainVideo.currentTime || 0) + step);
+                self._mainVideo.currentTime = target;
+                self._updateMediaSessionPosition(self._mainVideo);
+                if (self._pipVideo) {
+                    try { self._pipVideo.dispatchEvent(new Event('timeupdate')); } catch (e) {}
+                }
+                if (self._pipActive) {
+                    self.renderFrame();
+                }
+            });
+
+            setHandler('seekbackward', function(details) {
+                if (!self._mainVideo) return;
+                var step = (details && typeof details.seekOffset === 'number' && details.seekOffset > 0) ? details.seekOffset : 10;
+                var target = Math.max(0, (self._mainVideo.currentTime || 0) - step);
+                self._mainVideo.currentTime = target;
+                self._updateMediaSessionPosition(self._mainVideo);
+                if (self._pipVideo) {
+                    try { self._pipVideo.dispatchEvent(new Event('timeupdate')); } catch (e) {}
+                }
+                if (self._pipActive) {
+                    self.renderFrame();
+                }
+            });
+
+            setHandler('previoustrack', function() {
+                var prevBtn = document.querySelector('.btnPreviousTrack:not(.hide), .btnPreviousChapter:not(.hide)');
+                if (prevBtn) {
+                    prevBtn.click();
+                } else if (self._mainVideo) {
+                    self._mainVideo.currentTime = 0;
+                    self._updateMediaSessionPosition(self._mainVideo);
+                }
+            });
+
+            setHandler('nexttrack', function() {
+                var nextBtn = document.querySelector('.btnNextTrack:not(.hide), .btnNextChapter:not(.hide)');
+                if (nextBtn) {
+                    nextBtn.click();
+                }
+            });
+
+            setHandler('stop', function() {
+                if (self._mainVideo) {
+                    self._mainVideo.pause();
+                    self._mainVideo.currentTime = 0;
+                    self._updateMediaSessionPosition(self._mainVideo);
+                }
+            });
+
+            this._updateMediaSessionMetadata();
+            this._updateMediaSessionPosition(mv);
+        },
+
+        _onEnterPip: function(mainVideo) {
+            var self = this;
+            this._pipActive = true;
+            if (document.body) {
+                document.body.classList.add('ai-pip-active');
+            }
+
+            // Show clean placeholder in the original big player container
+            var container = mainVideo.closest ? mainVideo.closest('.videoPlayerContainer') : mainVideo.parentElement;
+            if (container && !container.querySelector('.ai-pip-placeholder')) {
+                var ph = document.createElement('div');
+                ph.className = 'ai-pip-placeholder';
+                ph.innerHTML = '<span class="material-icons" style="font-size:48px;opacity:0.5;">picture_in_picture_alt</span><span>Playing in Picture-in-Picture</span>';
+                container.appendChild(ph);
+            }
+
+            // Ensure any track that was previously hidden gets restored to 'showing' so Jellyfin's
+            // HtmlVideoPlayer.getTextTracks() and _setSubtitleOffset() work natively while in PiP.
+            this._ensureNativeTracksShowing(mainVideo);
+
+            // Keep Chromium hardware video decoding active even when main tab is hidden/minimized
+            try {
+                var capFn = mainVideo.captureStream || mainVideo.mozCaptureStream;
+                if (capFn && !this._keepAliveStream) {
+                    this._keepAliveStream = capFn.call(mainVideo, 1);
+                }
+            } catch (e) {}
+
+            // Bind complete MediaSession controls & position timeline so native PiP window
+            // renders an interactive progress bar scrubber and 10-second seek navigation instead of "LIVE".
+            this._setupMediaSession(mainVideo);
+            this._updateMediaSessionPosition(mainVideo);
+            if (this._pipVideo) {
+                try { this._pipVideo.dispatchEvent(new Event('durationchange')); } catch (e) {}
+                try { this._pipVideo.dispatchEvent(new Event('timeupdate')); } catch (e) {}
+            }
+
+            this._startRenderLoop();
+            try {
+                mainVideo.dispatchEvent(new Event('enterpictureinpicture'));
+            } catch (e) {}
+        },
+
+        _onLeavePip: function() {
+            this._pipActive = false;
+            this._stopRenderLoop();
+            this._bgRafCallbacks.length = 0;
+
+            if (document.body) {
+                document.body.classList.remove('ai-pip-active');
+            }
+
+            var phs = document.querySelectorAll('.ai-pip-placeholder');
+            for (var i = 0; i < phs.length; i++) {
+                if (phs[i].parentNode) phs[i].parentNode.removeChild(phs[i]);
+            }
+
+            if (this._keepAliveStream) {
+                try {
+                    var tracks = this._keepAliveStream.getTracks ? this._keepAliveStream.getTracks() : [];
+                    for (var t = 0; t < tracks.length; t++) tracks[t].stop();
+                } catch (e) {}
+                this._keepAliveStream = null;
+            }
+
+            if (this._mainVideo) {
+                this._ensureNativeTracksShowing(this._mainVideo);
+                this._updateMediaSessionPosition(this._mainVideo);
+                try {
+                    this._mainVideo.dispatchEvent(new Event('leavepictureinpicture'));
+                } catch (e) {}
+            }
+
+            if (this._pipVideo && !this._pipVideo.paused) {
+                this._syncingPlayState = true;
+                try { this._pipVideo.pause(); } catch (e) {}
+                this._syncingPlayState = false;
+            }
+
+            try {
+                window.dispatchEvent(new Event('resize'));
+            } catch (e) {}
+        },
+
+        _ensureNativeTracksShowing: function(video) {
+            if (!video || !video.textTracks) return;
+            for (var i = 0; i < video.textTracks.length; i++) {
+                var tr = video.textTracks[i];
+                if (tr._aiSavedPipMode === 'showing') {
+                    tr.mode = 'showing';
+                    delete tr._aiSavedPipMode;
+                }
+            }
+        },
+
+        _flushBackgroundUpdates: function() {
+            if (!this._pipActive || !document.hidden) return;
+            // Flush queued rAF callbacks (SubtitlesOctopus, libbitsub, WebGL upscaler) when tab is hidden
+            if (this._bgRafCallbacks.length > 0) {
+                var cbs = this._bgRafCallbacks.splice(0, this._bgRafCallbacks.length);
+                var ts = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+                for (var i = 0; i < cbs.length; i++) {
+                    try { cbs[i](ts); } catch (e) {}
+                }
+            }
+            // Keep Jellyfin's custom .videoSubtitlesInner and PiP timeline updated when background tab throttles timeupdate
+            if (this._mainVideo && !this._mainVideo.paused) {
+                var now = Date.now();
+                if (now - this._lastBgTimeUpdateMs >= 200) {
+                    this._lastBgTimeUpdateMs = now;
+                    this._updateMediaSessionPosition(this._mainVideo);
+                    if (this._pipVideo) {
+                        try { this._pipVideo.dispatchEvent(new Event('timeupdate')); } catch (e) {}
+                    }
+                    if (document.querySelector('.videoSubtitlesInner')) {
+                        try { this._mainVideo.dispatchEvent(new Event('timeupdate')); } catch (e) {}
+                    }
+                }
+            }
+        },
+
+        _startRenderLoop: function() {
+            this._stopRenderLoop();
+            var self = this;
+
+            // 1. Unthrottled Web Worker timer so PiP continues updating when tab is in background
+            try {
+                var blob = new Blob([
+                    'var id=setInterval(function(){postMessage(0);},33);onmessage=function(){clearInterval(id);};'
+                ], { type: 'application/javascript' });
+                var url = URL.createObjectURL(blob);
+                this._worker = new Worker(url);
+                URL.revokeObjectURL(url);
+                this._worker.onmessage = function() {
+                    if (self._pipActive) {
+                        self._flushBackgroundUpdates();
+                        self.renderFrame();
+                    }
+                };
+            } catch (e) {
+                this._worker = {
+                    _id: setInterval(function() {
+                        if (self._pipActive) {
+                            self._flushBackgroundUpdates();
+                            self.renderFrame();
+                        }
+                    }, 33),
+                    postMessage: function() { clearInterval(this._id); },
+                    terminate: function() { clearInterval(this._id); }
+                };
+            }
+
+            // 2. High-precision requestVideoFrameCallback when tab is active
+            var scheduleRvfc = function() {
+                if (!self._pipActive || !self._mainVideo || !self._mainVideo.requestVideoFrameCallback) return;
+                self._rvfcId = self._mainVideo.requestVideoFrameCallback(function() {
+                    if (!self._pipActive) return;
+                    self.renderFrame();
+                    scheduleRvfc();
+                });
+            };
+            scheduleRvfc();
+        },
+
+        _stopRenderLoop: function() {
+            if (this._worker) {
+                try {
+                    this._worker.postMessage(0);
+                    this._worker.terminate();
+                } catch (e) {}
+                this._worker = null;
+            }
+            if (this._rvfcId !== null && this._mainVideo && this._mainVideo.cancelVideoFrameCallback) {
+                try {
+                    this._mainVideo.cancelVideoFrameCallback(this._rvfcId);
+                } catch (e) {}
+            }
+            this._rvfcId = null;
+        },
+
+        renderFrame: function() {
+            var v = this._mainVideo;
+            var canvas = this._pipCanvas;
+            var ctx = this._pipCtx;
+            if (!v || !canvas || !ctx) return;
+
+            var vw = v.videoWidth || 1280;
+            var vh = v.videoHeight || 720;
+            if (vw > 1920) {
+                vh = Math.max(2, Math.round(vh * (1920 / vw)));
+                vw = 1920;
+            }
+            if (canvas.width !== vw || canvas.height !== vh) {
+                canvas.width = vw;
+                canvas.height = vh;
+            }
+
+            // 1. Base video layer (use upscaled WebGL/AI canvas if active, otherwise raw video)
+            var upCanvas = document.getElementById('upscaler-canvas');
+            var drewVideo = false;
+            if (upCanvas && upCanvas.width > 0 && upCanvas.height > 0 && upCanvas.style.display !== 'none') {
+                try {
+                    ctx.drawImage(upCanvas, 0, 0, vw, vh);
+                    drewVideo = true;
+                } catch (e) {}
+            }
+            if (!drewVideo) {
+                try {
+                    ctx.drawImage(v, 0, 0, vw, vh);
+                } catch (e) {}
+            }
+
+            // 2. Canvas-rendered subtitles (ASS/SSA via SubtitlesOctopus, PGS/VobSub via libbitsub)
+            var container = (v.closest && v.closest('.videoPlayerContainer')) || v.parentElement || document;
+            var subCanvases = container.querySelectorAll ? container.querySelectorAll('canvas') : [];
+            for (var i = 0; i < subCanvases.length; i++) {
+                var sc = subCanvases[i];
+                if (sc === canvas || sc.id === 'upscaler-canvas') continue;
+                if (sc.width > 0 && sc.height > 0 && sc.style.display !== 'none') {
+                    try {
+                        ctx.drawImage(sc, 0, 0, vw, vh);
+                    } catch (e) {}
+                }
+            }
+
+            // 3. Text-rendered subtitles (Custom .videoSubtitles DOM or Native <track> cues)
+            var subText = this._extractActiveSubtitleLines(v);
+            if (subText.primary.length > 0) {
+                this._drawSubtitleLines(ctx, subText.primary, vw, vh, false);
+            }
+            if (subText.secondary.length > 0) {
+                this._drawSubtitleLines(ctx, subText.secondary, vw, vh, true);
+            }
+        },
+
+        _cleanSubtitleString: function(raw) {
+            if (!raw) return [];
+            var text = String(raw)
+                .replace(/<br\s*\/?>/gi, '\n')
+                .replace(/\\N/gi, '\n')
+                .replace(/\r/g, '')
+                .replace(/\{[^}]*\}/g, '')
+                .replace(/<[^>]+>/g, '')
+                .replace(/\u200E/g, '');
+            var rawLines = text.split('\n');
+            var out = [];
+            for (var i = 0; i < rawLines.length; i++) {
+                var line = rawLines[i].trim();
+                if (line) out.push(line);
+            }
+            return out;
+        },
+
+        _extractActiveSubtitleLines: function(video) {
+            var primary = [];
+            var secondary = [];
+
+            // Source A: Jellyfin's custom .videoSubtitles DOM elements
+            var pElem = document.querySelector('.videoSubtitlesInner');
+            if (pElem && !pElem.classList.contains('hide')) {
+                var pHtml = pElem.innerHTML || pElem.textContent || '';
+                primary = this._cleanSubtitleString(pHtml);
+            }
+            var sElem = document.querySelector('.videoSecondarySubtitlesInner');
+            if (sElem && !sElem.classList.contains('hide')) {
+                var sHtml = sElem.innerHTML || sElem.textContent || '';
+                secondary = this._cleanSubtitleString(sHtml);
+            }
+
+            // Source B: Native HTML5 video.textTracks (VTTCue / TextTrackCue)
+            // Scan tr.cues directly using unshifted base times + live subtitle offset (or Jellyfin-shifted
+            // cue.startTime/endTime) so offset changes apply immediately even while paused or mid-cue.
+            if (primary.length === 0 && video && video.textTracks) {
+                var now = Number(video.currentTime) || 0;
+                var offsetSec = this._getCurrentSubtitleOffsetSeconds();
+                var trackIdx = 0;
+
+                for (var i = 0; i < video.textTracks.length; i++) {
+                    var tr = video.textTracks[i];
+                    if (tr.mode === 'showing' || tr._aiSavedPipMode === 'showing') {
+                        var cueLines = [];
+                        var allCues = tr.cues;
+                        if (allCues && allCues.length > 0) {
+                            for (var c = 0; c < allCues.length; c++) {
+                                var cue = allCues[c];
+                                if (typeof cue._aiOrigStart !== 'number') {
+                                    cue._aiOrigStart = cue.startTime + offsetSec;
+                                    cue._aiOrigEnd = cue.endTime + offsetSec;
+                                }
+                                var cStart = this._hasSubtitleOffsetOverride
+                                    ? (cue._aiOrigStart - offsetSec)
+                                    : cue.startTime;
+                                var cEnd = this._hasSubtitleOffsetOverride
+                                    ? (cue._aiOrigEnd - offsetSec)
+                                    : cue.endTime;
+                                if (now >= cStart && now <= cEnd) {
+                                    var parsed = this._cleanSubtitleString(cue.text || '');
+                                    for (var k = 0; k < parsed.length; k++) cueLines.push(parsed[k]);
+                                }
+                            }
+                        } else if (tr.activeCues && tr.activeCues.length > 0) {
+                            for (var a = 0; a < tr.activeCues.length; a++) {
+                                var parsedActive = this._cleanSubtitleString(tr.activeCues[a].text || '');
+                                for (var m = 0; m < parsedActive.length; m++) cueLines.push(parsedActive[m]);
+                            }
+                        }
+
+                        if (cueLines.length > 0) {
+                            if (trackIdx === 0) {
+                                primary = cueLines;
+                            } else if (secondary.length === 0) {
+                                secondary = cueLines;
+                            }
+                        }
+                        trackIdx++;
+                    }
+                }
+            }
+
+            return { primary: primary, secondary: secondary };
+        },
+
+        _wrapLine: function(ctx, text, maxWidth) {
+            if (ctx.measureText(text).width <= maxWidth) return [text];
+            var words = text.split(/\s+/);
+            var lines = [];
+            var cur = '';
+            for (var i = 0; i < words.length; i++) {
+                var test = cur ? (cur + ' ' + words[i]) : words[i];
+                if (ctx.measureText(test).width > maxWidth && cur) {
+                    lines.push(cur);
+                    cur = words[i];
+                } else {
+                    cur = test;
+                }
+            }
+            if (cur) lines.push(cur);
+            return lines;
+        },
+
+        _drawSubtitleLines: function(ctx, lines, vw, vh, isSecondary) {
+            var appearance = this._getSubtitleAppearance();
+            var fontScale = appearance.fontScale || 1.0;
+            var fontSize = Math.max(16, Math.round(vh * (isSecondary ? 0.038 : 0.046) * fontScale));
+            ctx.save();
+            ctx.font = '600 ' + fontSize + 'px "Noto Sans", -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+
+            var maxWidth = Math.round(vw * 0.88);
+            var wrapped = [];
+            for (var i = 0; i < lines.length; i++) {
+                var parts = this._wrapLine(ctx, lines[i], maxWidth);
+                for (var j = 0; j < parts.length; j++) wrapped.push(parts[j]);
+            }
+            if (wrapped.length === 0) {
+                ctx.restore();
+                return;
+            }
+
+            var lineHeight = Math.round(fontSize * 1.34);
+            var totalHeight = wrapped.length * lineHeight;
+            var vp = typeof appearance.verticalPosition === 'number' ? appearance.verticalPosition : -2;
+            var startY;
+            if (isSecondary) {
+                startY = Math.round(vh * 0.06) + Math.round(lineHeight / 2);
+            } else if (vp < 0) {
+                var bottomOffsetPx = Math.round(vh * 0.035) + Math.round(Math.abs(vp + 1) * lineHeight * 0.65);
+                startY = Math.max(
+                    Math.round(lineHeight / 2) + 8,
+                    vh - bottomOffsetPx - totalHeight + Math.round(lineHeight / 2)
+                );
+            } else {
+                var topOffsetPx = Math.round(vh * 0.035) + Math.round(vp * lineHeight * 0.65);
+                startY = Math.min(
+                    vh - totalHeight + Math.round(lineHeight / 2) - 8,
+                    topOffsetPx + Math.round(lineHeight / 2)
+                );
+            }
+            var cx = Math.round(vw / 2);
+            var padX = Math.round(fontSize * 0.42);
+            var padY = Math.round(fontSize * 0.16);
+
+            for (var k = 0; k < wrapped.length; k++) {
+                var line = wrapped[k];
+                var cy = startY + k * lineHeight;
+                var tw = Math.ceil(ctx.measureText(line).width);
+
+                // Semi-transparent dark pill backdrop for contrast
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.58)';
+                var rx = cx - Math.round(tw / 2) - padX;
+                var ry = cy - Math.round(fontSize / 2) - padY;
+                var rw = tw + padX * 2;
+                var rh = fontSize + padY * 2;
+                ctx.fillRect(rx, ry, rw, rh);
+
+                // Crisp dark outline + white fill
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.95)';
+                ctx.lineWidth = Math.max(3, Math.round(fontSize * 0.16));
+                ctx.lineJoin = 'round';
+                ctx.miterLimit = 2;
+                ctx.strokeText(line, cx, cy);
+
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(line, cx, cy);
+            }
+
+            ctx.restore();
+        }
+    };
+
+    window.PipSubtitleManager = PipSubtitleManager;
+    PipSubtitleManager.init();
 
     // Make available globally
     window.PlayerIntegration = PlayerIntegration;
